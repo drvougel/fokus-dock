@@ -29,6 +29,9 @@ public sealed class AppConfig
     /// <summary>Öffnet das Prioritäts-Fenster.</summary>
     public string PriorityHotkey { get; set; } = "Ctrl+Alt+P";
 
+    /// <summary>Sammelplatz unten rechts: alle Apps ohne eigenen Platz liegen dort übereinander.</summary>
+    public bool OverflowCorner { get; set; } = true;
+
     /// <summary>
     /// Prioritätsliste: vorne = wichtiger. Die Reihenfolge bestimmt, welche Apps einen Platz außen bekommen.
     /// Startbelegung: erst links von oben nach unten, dann rechts.

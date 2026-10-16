@@ -239,7 +239,7 @@ public partial class DockWindow : Window
             ApplySlots(groups);
         }
 
-        if (_listSlot >= 0 && (_slots[_listSlot] < 0 || SlotWindows(_slots[_listSlot]).Count == 0))
+        if (_listSlot >= 0 && WindowsOfSlot(_listSlot).Count == 0)
         {
             HideList();
         }
@@ -269,10 +269,11 @@ public partial class DockWindow : Window
     private void AssignSlots(bool onlyRunning)
     {
         Array.Fill(_slots, -1);
+        int overflow = OverflowSlot;
         for (int c = 0; c < _config.Cells.Count; c++)
         {
             int app = IndexOfApp(_config.Cells[c].App);
-            if (app >= 0 && CanHaveSlot(app) && (!onlyRunning || SlotWindows(app).Count > 0) && !_slots.Contains(app))
+            if (c != overflow && app >= 0 && CanHaveSlot(app) && (!onlyRunning || SlotWindows(app).Count > 0) && !_slots.Contains(app))
             {
                 _slots[c] = app;
             }
@@ -286,7 +287,7 @@ public partial class DockWindow : Window
                 continue;
             }
 
-            while (cell < _slots.Length && _slots[cell] >= 0)
+            while (cell < _slots.Length && (_slots[cell] >= 0 || cell == overflow))
             {
                 cell++;
             }
@@ -303,10 +304,11 @@ public partial class DockWindow : Window
     /// <summary>Eine App mit fester Zelle wandert zurück in ihre Zelle, sobald sie läuft. Dort verdrängt sie die App.</summary>
     private void EnforceHomes()
     {
+        int overflow = OverflowSlot;
         for (int c = 0; c < _config.Cells.Count; c++)
         {
             int app = IndexOfApp(_config.Cells[c].App);
-            if (app < 0 || _slots[c] == app || !CanHaveSlot(app) || SlotWindows(app).Count == 0)
+            if (c == overflow || app < 0 || _slots[c] == app || !CanHaveSlot(app) || SlotWindows(app).Count == 0)
             {
                 continue;
             }
@@ -356,10 +358,10 @@ public partial class DockWindow : Window
                 continue;
             }
 
-            int slot = Array.FindIndex(_slots, app => app < 0 || SlotWindows(app).Count == 0);
+            int slot = FindSlot(app => app < 0 || SlotWindows(app).Count == 0);
             if (slot < 0)
             {
-                slot = Array.FindIndex(_slots, app => app >= 0 && !_config.Apps[app].AlwaysOutside);
+                slot = FindSlot(app => app >= 0 && !_config.Apps[app].AlwaysOutside);
             }
             if (slot < 0)
             {
@@ -378,9 +380,10 @@ public partial class DockWindow : Window
     /// </summary>
     private void FillGaps(List<WindowInfo>[] groups)
     {
+        int overflow = OverflowSlot;
         for (int s = 0; s < _slots.Length; s++)
         {
-            if (_slots[s] >= 0 && SlotWindows(_slots[s]).Count > 0)
+            if (s == overflow || (_slots[s] >= 0 && SlotWindows(_slots[s]).Count > 0))
             {
                 continue;
             }
@@ -414,16 +417,16 @@ public partial class DockWindow : Window
     private void ApplySlots(List<WindowInfo>[] groups)
     {
         NativeRect[] rects = DockLayout.SlotRects(_config);
+        int overflow = OverflowSlot;
         for (int s = 0; s < _slots.Length; s++)
         {
-            int app = _slots[s];
-            if (app < 0)
+            if (s != overflow && _slots[s] < 0)
             {
                 _slotSignature[s] = null;
                 continue;
             }
 
-            List<WindowInfo> windows = SlotWindows(app);
+            List<WindowInfo> windows = WindowsOfSlot(s);
             string signature = string.Join(",", windows.Select(w => w.Hwnd.ToString()));
             if (signature == _slotSignature[s])
             {
@@ -466,13 +469,13 @@ public partial class DockWindow : Window
                 break;
             }
         }
-        if (slot < 0 || _slots[slot] < 0)
+        if (slot < 0 || (_slots[slot] < 0 && slot != OverflowSlot))
         {
             return false;
         }
 
         IntPtr hwnd = Native.GetAncestor(Native.WindowFromPoint(pt), Native.GA_ROOT);
-        if (!SlotWindows(_slots[slot]).Any(w => w.Hwnd == hwnd))
+        if (!WindowsOfSlot(slot).Any(w => w.Hwnd == hwnd))
         {
             return false;
         }
@@ -496,9 +499,104 @@ public partial class DockWindow : Window
     private List<WindowInfo> SlotWindows(int app) =>
         _groups[app].Where(w => w.Hwnd != _centerHwnd).ToList();
 
+    /// <summary>
+    /// Sammelplatz: die unterste Zelle der rechten Seite (ohne rechte Zellen die letzte). -1, wenn abgeschaltet.
+    /// Er bekommt nie eine eigene App, sondern nimmt alle Apps ohne Platz auf.
+    /// </summary>
+    private int OverflowSlot
+    {
+        get
+        {
+            List<CellEntry> cells = _config.Cells;
+            if (!_config.OverflowCorner || cells.Count < 2)
+            {
+                return -1;
+            }
+
+            int best = -1;
+            for (int c = 0; c < cells.Count; c++)
+            {
+                if (cells[c].Side != "right")
+                {
+                    continue;
+                }
+                if (best < 0 || cells[c].Y + cells[c].H > cells[best].Y + cells[best].H
+                    || (cells[c].Y + cells[c].H == cells[best].Y + cells[best].H && cells[c].X > cells[best].X))
+                {
+                    best = c;
+                }
+            }
+            return best >= 0 ? best : cells.Count - 1;
+        }
+    }
+
+    /// <summary>Fenster eines Platzes: beim Sammelplatz alle Apps ohne Platz, sonst die Fenster seiner App.</summary>
+    private List<WindowInfo> WindowsOfSlot(int slot)
+    {
+        if (slot == OverflowSlot)
+        {
+            return OverflowWindows();
+        }
+        return _slots[slot] < 0 ? new List<WindowInfo>() : SlotWindows(_slots[slot]);
+    }
+
+    /// <summary>Fenster aller Apps ohne Platz in Z-Reihenfolge: das zuletzt aktive liegt vorne.</summary>
+    private List<WindowInfo> OverflowWindows() =>
+        Enumerable.Range(0, _groups.Length)
+            .Where(i => !_slots.Contains(i))
+            .SelectMany(SlotWindows)
+            .OrderBy(w => w.Z)
+            .ToList();
+
+    /// <summary>Dieselben Fenster für die Liste: nach Priorität der App, innerhalb der App das zuletzt aktive zuerst.</summary>
+    private List<WindowInfo> OverflowListWindows() =>
+        Enumerable.Range(0, _groups.Length)
+            .Where(i => !_slots.Contains(i))
+            .SelectMany(SlotWindows)
+            .ToList();
+
+    /// <summary>Erster normaler Platz (nicht der Sammelplatz), dessen App die Bedingung erfüllt.</summary>
+    private int FindSlot(Func<int, bool> match)
+    {
+        int overflow = OverflowSlot;
+        for (int s = 0; s < _slots.Length; s++)
+        {
+            if (s != overflow && match(_slots[s]))
+            {
+                return s;
+            }
+        }
+        return -1;
+    }
+
+    /// <summary>
+    /// Fenster aus dem Sammelplatz in die Mitte. Das bisherige Mitte-Fenster muss nicht umgesetzt werden:
+    /// der nächste Abgleich legt es auf den Platz seiner App oder, ohne Platz, in den Sammelplatz.
+    /// </summary>
+    private void SwapFromOverflow(IntPtr hwnd)
+    {
+        int app = AppOfWindow(_groups, hwnd);
+        if (app < 0 || hwnd == _centerHwnd)
+        {
+            return;
+        }
+
+        WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center);
+        _centerHwnd = hwnd;
+        _centerApp = app;
+        Array.Fill(_slotSignature, null);
+        Refresh();
+    }
+
     /// <summary>Fenster aus dem Kachelplatz in die Mitte. Das bisherige Mitte-Fenster übernimmt den Platz.</summary>
     private void SwapToCenter(IntPtr hwnd, int slot)
     {
+        if (slot == OverflowSlot)
+        {
+            SwapFromOverflow(hwnd);
+            return;
+        }
+
         int app = _slots[slot];
         if (app < 0 || hwnd == _centerHwnd)
         {
@@ -539,13 +637,7 @@ public partial class DockWindow : Window
     /// <summary>Fensterliste der App eines Kachelplatzes, scrollbar, über dem Platz.</summary>
     private void ShowList(int slot)
     {
-        int app = _slots[slot];
-        if (app < 0)
-        {
-            return;
-        }
-
-        List<WindowInfo> windows = SlotWindows(app);
+        List<WindowInfo> windows = slot == OverflowSlot ? OverflowListWindows() : WindowsOfSlot(slot);
         if (windows.Count == 0)
         {
             return;

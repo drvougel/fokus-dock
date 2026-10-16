@@ -14,6 +14,8 @@ public sealed class WindowInfo
     public string ProcessName { get; init; }
     /// <summary>Pfad zur EXE für das Icon. Null, wenn der Prozess nicht lesbar ist (z. B. Admin).</summary>
     public string ExePath { get; init; }
+    /// <summary>Position in der Z-Reihenfolge beim letzten Einsammeln, 0 = oberstes Fenster.</summary>
+    public int Z { get; set; }
 }
 
 internal static class WindowFinder
@@ -43,12 +45,14 @@ internal static class WindowFinder
         }
 
         uint self = (uint)Environment.ProcessId;
+        int z = 0;
 
         Native.EnumWindows((hwnd, _) =>
         {
             WindowInfo info = Describe(hwnd, self);
             if (info != null)
             {
+                info.Z = z++;
                 for (int i = 0; i < apps.Count; i++)
                 {
                     if (Matches(apps[i], info))
