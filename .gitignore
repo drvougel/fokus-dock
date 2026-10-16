@@ -1,0 +1,10 @@
+bin/
+obj/
+publish/
+.vs/
+*.user
+
+# persönliche Konfiguration und Arbeitsnotizen
+config.json
+SPEC*.md
+Screenshot*.png

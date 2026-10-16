@@ -1,0 +1,17 @@
+{
+  "tilesPerSide": 3,
+  "centerPercent": 50,
+  "startInCenter": "Brave",
+  "hideDelayMs": 400,
+  "hotkey": "Ctrl+Alt+F",
+  "exitHotkey": "Ctrl+Alt+Q",
+  "priorityHotkey": "Ctrl+Alt+P",
+  "apps": [
+    { "name": "Claude", "processes": [ "Claude.exe" ], "alwaysOutside": true },
+    { "name": "WhatsApp Web", "processes": [ "brave.exe" ], "titleStartsWith": "WhatsApp Web", "alwaysOutside": true },
+    { "name": "Brave", "processes": [ "brave.exe" ], "alwaysOutside": true },
+    { "name": "PowerShell", "processes": [ "powershell.exe", "pwsh.exe", "WindowsTerminal.exe" ] },
+    { "name": "Explorer", "processes": [ "explorer.exe" ] },
+    { "name": "Notepad", "processes": [ "notepad.exe" ] }
+  ]
+}
