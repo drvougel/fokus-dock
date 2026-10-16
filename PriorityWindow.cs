@@ -8,8 +8,8 @@ using System.Windows.Media;
 namespace FokusDock;
 
 /// <summary>
-/// Prioritätsfenster: vorne in der Liste = wichtiger. ▲/▼ ändern die Reihenfolge,
-/// „immer außen“ setzt pro App das Flag. „Neu sortieren“ verteilt die Plätze sofort neu.
+/// Prioritätsfenster: alle bekannten Apps, vorne in der Liste = wichtiger. Laufende Apps stehen hell,
+/// nicht laufende grau. ▲/▼ und „immer außen“ werden sofort gespeichert. „Neu sortieren“ verteilt die Plätze neu.
 /// </summary>
 public sealed class PriorityWindow : Window
 {
@@ -18,6 +18,7 @@ public sealed class PriorityWindow : Window
     private readonly Action _openLayout;
     private readonly ListBox _list = new();
     private List<AppEntry> _order = new();
+    private List<bool> _running = new();
 
     public PriorityWindow(Action<List<AppEntry>, bool> apply, Action resort, Action openLayout)
     {
@@ -44,12 +45,12 @@ public sealed class PriorityWindow : Window
         var buttons = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
         buttons.Children.Add(MakeButton("▲", (_, _) => Move(-1)));
         buttons.Children.Add(MakeButton("▼", (_, _) => Move(1)));
+        buttons.Children.Add(MakeButton("Entfernen", (_, _) => Remove()));
         buttons.Children.Add(MakeButton("Neu sortieren", (_, _) =>
         {
-            _apply(_order, false);
+            _apply(_order, true);
             _resort();
         }));
-        buttons.Children.Add(MakeButton("Speichern", (_, _) => _apply(_order, true)));
         buttons.Children.Add(MakeButton("Layout…", (_, _) => _openLayout()));
         buttons.Children.Add(MakeButton("Schließen", (_, _) => Hide()));
 
@@ -67,10 +68,11 @@ public sealed class PriorityWindow : Window
         };
     }
 
-    /// <summary>Zeigt die Liste in der übergebenen Reihenfolge (vorne = wichtigste).</summary>
-    public void Open(IEnumerable<AppEntry> apps)
+    /// <summary>Zeigt die Liste in der übergebenen Reihenfolge (vorne = wichtigste). running: pro App, ob Fenster offen sind.</summary>
+    public void Open(IEnumerable<AppEntry> apps, IReadOnlyList<bool> running)
     {
         _order = apps.ToList();
+        _running = running.ToList();
         Rebuild(_list.SelectedIndex < 0 ? 0 : Math.Min(_list.SelectedIndex, _order.Count - 1));
         Show();
         Activate();
@@ -79,8 +81,10 @@ public sealed class PriorityWindow : Window
     private void Rebuild(int select)
     {
         _list.Items.Clear();
-        foreach (AppEntry app in _order)
+        for (int i = 0; i < _order.Count; i++)
         {
+            AppEntry app = _order[i];
+            bool running = i < _running.Count && _running[i];
             var row = new DockPanel { Margin = new Thickness(4, 3, 4, 3) };
 
             var check = new CheckBox
@@ -91,15 +95,15 @@ public sealed class PriorityWindow : Window
                 VerticalAlignment = VerticalAlignment.Center,
                 Margin = new Thickness(12, 0, 0, 0),
             };
-            check.Checked += (_, _) => app.AlwaysOutside = true;
-            check.Unchecked += (_, _) => app.AlwaysOutside = false;
+            check.Checked += (_, _) => { app.AlwaysOutside = true; _apply(_order, true); };
+            check.Unchecked += (_, _) => { app.AlwaysOutside = false; _apply(_order, true); };
             DockPanel.SetDock(check, Dock.Right);
 
             row.Children.Add(check);
             row.Children.Add(new TextBlock
             {
                 Text = app.Name,
-                Foreground = Brushes.White,
+                Foreground = running ? Brushes.White : Brushes.Gray,
                 FontSize = 14,
                 VerticalAlignment = VerticalAlignment.Center,
             });
@@ -122,7 +126,24 @@ public sealed class PriorityWindow : Window
         }
 
         (_order[index], _order[target]) = (_order[target], _order[index]);
+        (_running[index], _running[target]) = (_running[target], _running[index]);
+        _apply(_order, true);
         Rebuild(target);
+    }
+
+    /// <summary>Eintrag löschen, z. B. für alte Apps. Läuft die App noch, wird sie beim nächsten Abgleich wieder angehängt.</summary>
+    private void Remove()
+    {
+        int index = _list.SelectedIndex;
+        if (index < 0 || index >= _order.Count)
+        {
+            return;
+        }
+
+        _order.RemoveAt(index);
+        _running.RemoveAt(index);
+        _apply(_order, true);
+        Rebuild(Math.Min(index, _order.Count - 1));
     }
 
     private static Button MakeButton(string text, RoutedEventHandler click)

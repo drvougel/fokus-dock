@@ -144,8 +144,34 @@ public partial class DockWindow : Window
 
     private void OpenPriority()
     {
+        Refresh();
         _priority ??= new PriorityWindow(ApplyPriority, Resort, OpenLayout);
-        _priority.Open(_config.Apps);
+        _priority.Open(_config.Apps, _config.Apps.Select((_, i) => _groups[i].Count > 0).ToList());
+    }
+
+    /// <summary>
+    /// Jede geöffnete App gehört in die Liste: Fenster ohne passenden Eintrag werden als neue App
+    /// hinten angehängt und sofort gespeichert. Hinten anhängen hält die Indizes von Plätzen und Mitte gültig.
+    /// </summary>
+    private void AddDiscoveredApps()
+    {
+        List<WindowInfo> unmatched = WindowFinder.FindUnmatched(_config.Apps);
+        if (unmatched.Count == 0)
+        {
+            return;
+        }
+
+        foreach (WindowInfo info in unmatched)
+        {
+            string name = WindowFinder.DisplayName(info);
+            if (IndexOfApp(name) >= 0)
+            {
+                name = $"{name} ({Path.GetFileNameWithoutExtension(info.ProcessName)})";
+            }
+            _config.Apps.Add(new AppEntry { Name = name, Processes = new List<string> { info.ProcessName } });
+        }
+
+        _config.Save(ConfigPath);
     }
 
     /// <summary>
@@ -186,6 +212,7 @@ public partial class DockWindow : Window
     /// <summary>Fensterstand lesen und die Kachelplätze und das Mitte-Fenster nachziehen.</summary>
     private void Refresh()
     {
+        AddDiscoveredApps();
         List<WindowInfo>[] groups = WindowFinder.Collect(_config.Apps);
         _groups = groups;
 

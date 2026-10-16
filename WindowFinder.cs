@@ -64,6 +64,50 @@ internal static class WindowFinder
         return groups;
     }
 
+    /// <summary>
+    /// Fenster von Prozessen, die noch keinem Config-Eintrag zugeordnet sind: ein Eintrag pro Prozessname,
+    /// in Z-Reihenfolge (zuletzt aktiv zuerst). Daraus werden neue Apps angelegt.
+    /// </summary>
+    public static List<WindowInfo> FindUnmatched(IReadOnlyList<AppEntry> apps)
+    {
+        var result = new List<WindowInfo>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        uint self = (uint)Environment.ProcessId;
+
+        Native.EnumWindows((hwnd, _) =>
+        {
+            WindowInfo info = Describe(hwnd, self);
+            if (info != null && !apps.Any(app => Matches(app, info)) && seen.Add(info.ProcessName))
+            {
+                result.Add(info);
+            }
+            return true;
+        }, IntPtr.Zero);
+
+        return result;
+    }
+
+    /// <summary>Lesbarer App-Name: Dateibeschreibung der EXE, sonst Prozessname ohne Endung.</summary>
+    public static string DisplayName(WindowInfo info)
+    {
+        try
+        {
+            if (info.ExePath != null)
+            {
+                string description = FileVersionInfo.GetVersionInfo(info.ExePath).FileDescription?.Trim();
+                if (!string.IsNullOrEmpty(description))
+                {
+                    return description;
+                }
+            }
+        }
+        catch (Exception)
+        {
+            // Versionsinfo nicht lesbar: Prozessname genügt
+        }
+        return Path.GetFileNameWithoutExtension(info.ProcessName);
+    }
+
     private static bool Matches(AppEntry app, WindowInfo info)
     {
         if (!app.Processes.Any(p => p.Equals(info.ProcessName, StringComparison.OrdinalIgnoreCase)))
