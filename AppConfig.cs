@@ -150,4 +150,7 @@ public sealed class AppEntry
 
     /// <summary>Immer außen, sobald nicht in der Mitte: bekommt notfalls einen Platz einer normalen App.</summary>
     public bool AlwaysOutside { get; set; }
+
+    /// <summary>Per Ziehen in den Sammelplatz gelegt: bekommt keinen eigenen Platz, bis sie wieder auf einen Platz gezogen wird.</summary>
+    public bool InCorner { get; set; }
 }

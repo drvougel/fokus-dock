@@ -36,6 +36,7 @@ Es läuft nur eine Instanz. Beenden mit `Strg+Alt+Q`.
 | **Zurück-Taste der Maus** auf ein Fenster einer Spalte | Dieses Fenster kommt in die Mitte. Das bisherige Mitte-Fenster rückt auf den freigewordenen Platz (Tausch). |
 | **Vorwärts-Taste der Maus** auf eine Spalte | Vorschauen aller Fenster dieser App erscheinen über dem Platz, untereinander und scrollbar (Mausrad). Ein Klick auf eine Vorschau setzt dieses Fenster in den Platz. Die Liste verschwindet, wenn die Maus sie verlässt. |
 | `Strg+Alt+F` | Spalten ein/aus. Das Mitte-Fenster bleibt, wo es ist. |
+| **Fenster ziehen** und über einem Platz loslassen | Das Fenster rastet dort ein. Seine App bekommt diesen Platz fest (gespeichert), die bisherige App tauscht auf den alten Platz. Über der Mitte losgelassen wird es das Mitte-Fenster, über dem Sammelplatz wandert die App dorthin und bleibt dort, bis du sie wieder auf einen Platz ziehst. Größe ändern löst kein Einrasten aus. |
 | `Strg+Alt+P` | Prioritätsliste: alle bekannten Apps, vorne = wichtiger. Laufende Apps stehen hell, nicht laufende grau. ▲/▼, „immer außen“ und „Entfernen“ werden sofort in `config.json` gespeichert. „Neu sortieren“ verteilt die Plätze neu. |
 | `Strg+Alt+Q` | Beendet Fokus-Dock. |
 

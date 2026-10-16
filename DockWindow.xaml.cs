@@ -24,6 +24,7 @@ public partial class DockWindow : Window
     private readonly AppConfig _config;
     private readonly WindowListWindow _list = new();
     private readonly MouseHook _mouse;
+    private readonly DragSnap _drag;
     private PriorityWindow _priority;
     private LayoutWindow _layout;
     private readonly DispatcherTimer _pollTimer;
@@ -53,6 +54,7 @@ public partial class DockWindow : Window
         _groups = Enumerable.Range(0, config.Apps.Count).Select(_ => new List<WindowInfo>()).ToArray();
 
         _mouse = new MouseHook(OnSlotButton);
+        _drag = new DragSnap(OnWindowMoved);
 
         _pollTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
         _pollTimer.Tick += (_, _) => Poll();
@@ -82,6 +84,7 @@ public partial class DockWindow : Window
         RegisterHotkey(hwnd, PriorityHotkeyId, _config.PriorityHotkey, "Prioritäts-Tastenkürzel");
 
         _mouse.Install();
+        _drag.Install();
     }
 
     private static void RegisterHotkey(IntPtr hwnd, int id, string text, string purpose)
@@ -99,6 +102,7 @@ public partial class DockWindow : Window
         _pollTimer.Stop();
         _refreshTimer.Stop();
         _mouse.Dispose();
+        _drag.Dispose();
         HideList();
         _list.Close();
         _priority?.Close();
@@ -282,7 +286,7 @@ public partial class DockWindow : Window
         int cell = 0;
         for (int i = 0; i < _config.Apps.Count; i++)
         {
-            if (!CanHaveSlot(i) || _slots.Contains(i) || (onlyRunning && SlotWindows(i).Count == 0))
+            if (!CanHaveSlot(i) || _slots.Contains(i) || _config.Apps[i].InCorner || (onlyRunning && SlotWindows(i).Count == 0))
             {
                 continue;
             }
@@ -353,7 +357,7 @@ public partial class DockWindow : Window
     {
         for (int i = 0; i < _config.Apps.Count; i++)
         {
-            if (!_config.Apps[i].AlwaysOutside || i == _centerApp || _slots.Contains(i) || SlotWindows(i).Count == 0)
+            if (!_config.Apps[i].AlwaysOutside || _config.Apps[i].InCorner || i == _centerApp || _slots.Contains(i) || SlotWindows(i).Count == 0)
             {
                 continue;
             }
@@ -402,7 +406,7 @@ public partial class DockWindow : Window
     {
         for (int i = 0; i < _config.Apps.Count; i++)
         {
-            if (!_slots.Contains(i) && SlotWindows(i).Count > 0)
+            if (!_slots.Contains(i) && !_config.Apps[i].InCorner && SlotWindows(i).Count > 0)
             {
                 return i;
             }
@@ -573,7 +577,7 @@ public partial class DockWindow : Window
     /// Fenster aus dem Sammelplatz in die Mitte. Das bisherige Mitte-Fenster muss nicht umgesetzt werden:
     /// der nächste Abgleich legt es auf den Platz seiner App oder, ohne Platz, in den Sammelplatz.
     /// </summary>
-    private void SwapFromOverflow(IntPtr hwnd)
+    private void MoveToCenter(IntPtr hwnd)
     {
         int app = AppOfWindow(_groups, hwnd);
         if (app < 0 || hwnd == _centerHwnd)
@@ -588,12 +592,112 @@ public partial class DockWindow : Window
         Refresh();
     }
 
+    /// <summary>
+    /// Fenster per Ziehen abgelegt (Mauszeiger beim Loslassen): über der Mitte wird es das Mitte-Fenster,
+    /// über einem Platz bekommt seine App diesen Platz fest, über dem Sammelplatz wandert die App dorthin.
+    /// Woanders abgelegt bleibt es, wo es ist.
+    /// </summary>
+    private void OnWindowMoved(IntPtr hwnd)
+    {
+        if (!_enabled)
+        {
+            return;
+        }
+
+        hwnd = Native.GetAncestor(hwnd, Native.GA_ROOT);
+        Native.GetCursorPos(out NativePoint pt);
+        Dispatcher.BeginInvoke(new Action(() => SnapWindow(hwnd, pt)));
+    }
+
+    private void SnapWindow(IntPtr hwnd, NativePoint pt)
+    {
+        // Nur den Fensterstand lesen, noch nichts platzieren: sonst springt das Fenster erst auf den alten Platz
+        AddDiscoveredApps();
+        _groups = WindowFinder.Collect(_config.Apps);
+        int app = AppOfWindow(_groups, hwnd);
+        if (app < 0)
+        {
+            return;
+        }
+
+        NativeRect center = DockLayout.Compute(_config).Center;
+        if (Contains(center, pt))
+        {
+            if (hwnd == _centerHwnd)
+            {
+                WindowPlacer.Place(hwnd, center);
+            }
+            else
+            {
+                MoveToCenter(hwnd);
+            }
+            return;
+        }
+
+        NativeRect[] rects = DockLayout.SlotRects(_config);
+        int slot = Array.FindIndex(rects, r => Contains(r, pt));
+        if (slot < 0)
+        {
+            return;
+        }
+
+        if (hwnd == _centerHwnd)
+        {
+            _centerHwnd = IntPtr.Zero;
+            _centerApp = -1;
+        }
+        MoveAppToSlot(app, slot);
+        WindowPlacer.PlaceInSlot(hwnd, rects[slot], Native.HWND_TOP, front: true);
+        Array.Fill(_slotSignature, null);
+        _config.Save(ConfigPath);
+        Refresh();
+    }
+
+    /// <summary>
+    /// App auf einen Platz setzen und die Zelle als ihren festen Platz merken. Die verdrängte App tauscht
+    /// auf den alten Platz. Der Sammelplatz ist kein fester Platz: dort wird die App nur als InCorner markiert.
+    /// </summary>
+    private void MoveAppToSlot(int app, int slot)
+    {
+        AppEntry entry = _config.Apps[app];
+        int old = Array.IndexOf(_slots, app);
+        foreach (CellEntry cell in _config.Cells.Where(c => c.App == entry.Name))
+        {
+            cell.App = null;
+        }
+
+        if (slot == OverflowSlot)
+        {
+            if (old >= 0)
+            {
+                _slots[old] = -1;
+            }
+            entry.InCorner = true;
+            return;
+        }
+
+        entry.InCorner = false;
+        int displaced = _slots[slot];
+        string slotHome = _config.Cells[slot].App;
+        _slots[slot] = app;
+        _config.Cells[slot].App = entry.Name;
+        if (old >= 0 && old != slot)
+        {
+            _slots[old] = displaced;
+            // Hatte die verdrängte App hier ihren festen Platz, zieht er mit auf den alten Platz
+            if (displaced >= 0 && slotHome == _config.Apps[displaced].Name)
+            {
+                _config.Cells[old].App = slotHome;
+            }
+        }
+    }
+
     /// <summary>Fenster aus dem Kachelplatz in die Mitte. Das bisherige Mitte-Fenster übernimmt den Platz.</summary>
     private void SwapToCenter(IntPtr hwnd, int slot)
     {
         if (slot == OverflowSlot)
         {
-            SwapFromOverflow(hwnd);
+            MoveToCenter(hwnd);
             return;
         }
 
