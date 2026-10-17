@@ -6,6 +6,7 @@ namespace FokusDock;
 /// <summary>
 /// Meldet, wenn der Nutzer ein Fenster fertig verschoben hat (EVENT_SYSTEM_MOVESIZEEND).
 /// Größenänderungen werden ignoriert: nur wenn die Fenstergröße gleich blieb, war es ein Verschieben.
+/// Ein Klick auf die Titelleiste oder ein mit Esc abgebrochenes Ziehen verändert die Position nicht und zählt nicht.
 /// Programmatisches Setzen per SetWindowPos löst das Ereignis nicht aus.
 /// </summary>
 internal sealed class DragSnap : IDisposable
@@ -24,16 +25,24 @@ internal sealed class DragSnap : IDisposable
     [DllImport("user32.dll")]
     private static extern bool UnhookWinEvent(IntPtr hook);
 
+    private readonly Action<IntPtr> _onStart;
+    private readonly Action _onEnd;
     private readonly Action<IntPtr> _onMoved;
     private readonly WinEventProc _proc; // Feld halten, damit der Delegat nicht vom GC eingesammelt wird
     private IntPtr _hook;
     private IntPtr _startHwnd;
     private int _startWidth;
     private int _startHeight;
+    private int _startLeft;
+    private int _startTop;
 
+    /// <param name="onStart">Ein Fenster beginnt, verschoben oder in der Größe geändert zu werden.</param>
+    /// <param name="onEnd">Das Ziehen ist zu Ende (auch bei Esc oder reinem Klick), noch vor der Prüfung auf Verschieben.</param>
     /// <param name="onMoved">Fenster, das gerade verschoben (nicht in der Größe geändert) wurde.</param>
-    public DragSnap(Action<IntPtr> onMoved)
+    public DragSnap(Action<IntPtr> onStart, Action onEnd, Action<IntPtr> onMoved)
     {
+        _onStart = onStart;
+        _onEnd = onEnd;
         _onMoved = onMoved;
         _proc = Callback;
     }
@@ -46,7 +55,18 @@ internal sealed class DragSnap : IDisposable
 
     private void Callback(IntPtr hook, uint eventType, IntPtr hwnd, int idObject, int idChild, uint thread, uint time)
     {
-        if (idObject != OBJID_WINDOW || hwnd == IntPtr.Zero || !Native.GetWindowRect(hwnd, out NativeRect rect))
+        if (idObject != OBJID_WINDOW || hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        // Das Ende immer melden, auch wenn das Fenster inzwischen weg ist: die Vorschau muss verschwinden
+        if (eventType == EVENT_SYSTEM_MOVESIZEEND)
+        {
+            _onEnd();
+        }
+
+        if (!Native.GetWindowRect(hwnd, out NativeRect rect))
         {
             return;
         }
@@ -56,14 +76,19 @@ internal sealed class DragSnap : IDisposable
             _startHwnd = hwnd;
             _startWidth = rect.Right - rect.Left;
             _startHeight = rect.Bottom - rect.Top;
+            _startLeft = rect.Left;
+            _startTop = rect.Top;
+            _onStart(hwnd);
             return;
         }
 
         bool sameSize = hwnd == _startHwnd
                         && Math.Abs(rect.Right - rect.Left - _startWidth) <= 2
                         && Math.Abs(rect.Bottom - rect.Top - _startHeight) <= 2;
+        // Nur wenn sich Left oder Top um mehr als 2 px geändert haben, wurde das Fenster wirklich verschoben
+        bool moved = Math.Abs(rect.Left - _startLeft) > 2 || Math.Abs(rect.Top - _startTop) > 2;
         _startHwnd = IntPtr.Zero;
-        if (sameSize)
+        if (sameSize && moved)
         {
             _onMoved(hwnd);
         }

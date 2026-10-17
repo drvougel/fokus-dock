@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace FokusDock;
@@ -16,6 +17,8 @@ public sealed class WindowInfo
     public string ExePath { get; init; }
     /// <summary>Position in der Z-Reihenfolge beim letzten Einsammeln, 0 = oberstes Fenster.</summary>
     public int Z { get; set; }
+    /// <summary>Das Fenster deckt seinen Monitor ganz ab und hat keine Titelleiste (Spiel, F11, Vollbildvideo). Solche Fenster werden nicht platziert.</summary>
+    public bool Fullscreen { get; init; }
 }
 
 internal static class WindowFinder
@@ -81,7 +84,8 @@ internal static class WindowFinder
         Native.EnumWindows((hwnd, _) =>
         {
             WindowInfo info = Describe(hwnd, self);
-            if (info != null && !apps.Any(app => Matches(app, info)) && seen.Add(info.ProcessName))
+            // Vollbildfenster (Spiele, F11, Videos) werden nie als neue App aufgenommen
+            if (info != null && !info.Fullscreen && !apps.Any(app => Matches(app, info)) && seen.Add(info.ProcessName))
             {
                 result.Add(info);
             }
@@ -144,7 +148,16 @@ internal static class WindowFinder
         }
 
         // Hilfs- und Tool-Fenster ausblenden
-        if ((Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE) & Native.WS_EX_TOOLWINDOW) != 0)
+        int exStyle = Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE);
+        if ((exStyle & Native.WS_EX_TOOLWINDOW) != 0)
+        {
+            return null;
+        }
+
+        // Wie die Taskleiste: besessene Fenster (Dialoge wie "Speichern unter") und Fenster, die sich nicht
+        // aktivieren lassen, sind keine Hauptfenster. WS_EX_APPWINDOW erzwingt einen Taskleistenknopf und hebt das auf.
+        if ((exStyle & Native.WS_EX_APPWINDOW) == 0
+            && (Native.GetWindow(hwnd, Native.GW_OWNER) != IntPtr.Zero || (exStyle & Native.WS_EX_NOACTIVATE) != 0))
         {
             return null;
         }
@@ -187,7 +200,32 @@ internal static class WindowFinder
             Title = title.ToString(),
             ProcessName = proc.Name,
             ExePath = proc.Path,
+            Fullscreen = IsFullscreen(hwnd),
         };
+    }
+
+    /// <summary>
+    /// Vollbild: das Fenster deckt seinen Monitor vollständig ab und hat keine Titelleiste.
+    /// Ein maximiertes Fenster mit Titelleiste zählt nicht, auch wenn es bei ausgeblendeter Taskleiste den Monitor füllt.
+    /// </summary>
+    internal static bool IsFullscreen(IntPtr hwnd)
+    {
+        if (!Native.GetWindowRect(hwnd, out NativeRect rect))
+        {
+            return false;
+        }
+
+        IntPtr monitor = Native.MonitorFromWindow(hwnd, Native.MONITOR_DEFAULTTONEAREST);
+        var info = new MonitorInfo { cbSize = Marshal.SizeOf<MonitorInfo>() };
+        if (monitor == IntPtr.Zero || !Native.GetMonitorInfo(monitor, ref info))
+        {
+            return false;
+        }
+
+        NativeRect screen = info.rcMonitor;
+        bool coversMonitor = rect.Left <= screen.Left && rect.Top <= screen.Top
+                             && rect.Right >= screen.Right && rect.Bottom >= screen.Bottom;
+        return coversMonitor && (Native.GetWindowLong(hwnd, Native.GWL_STYLE) & Native.WS_CAPTION) != Native.WS_CAPTION;
     }
 
     private static ProcInfo FindUwpChild(IntPtr frame, uint framePid)

@@ -24,29 +24,50 @@ public abstract class ThumbnailWindow : Window
     /// <summary>Begrenzt alle Vorschauen auf dieses Element. Null = keine Begrenzung.</summary>
     internal FrameworkElement ClipElement { get; set; }
 
+    /// <summary>Skalierungsfaktor (DIP zu Pixel) des Monitors, auf dem das Fenster liegt. Legt das Fensterhandle an.</summary>
+    internal double DpiScale()
+    {
+        new WindowInteropHelper(this).EnsureHandle();
+        return VisualTreeHelper.GetDpi(this).DpiScaleX;
+    }
+
+    /// <summary>
+    /// Setzt das Fenster auf ein Pixelrechteck, ganz oben (Topmost) und ohne Aktivierung.
+    /// Die Pixel gehen direkt an SetWindowPos; Left, Top, Width und Height werden mit dem Monitor-DPI nachgeführt.
+    /// </summary>
     internal void PlaceWindow(NativeRect rect)
     {
-        double scale = Monitors.Scale;
+        IntPtr hwnd = new WindowInteropHelper(this).EnsureHandle();
+        double scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
         Left = rect.Left / scale;
         Top = rect.Top / scale;
         Width = (rect.Right - rect.Left) / scale;
         Height = (rect.Bottom - rect.Top) / scale;
+        Native.SetWindowPos(hwnd, Native.HWND_TOPMOST, rect.Left, rect.Top, rect.Right - rect.Left, rect.Bottom - rect.Top, Native.SWP_NOACTIVATE);
     }
 
     /// <summary>Zeigt die Vorschau von source über area. Das Fenster muss bereits sichtbar sein.</summary>
-    internal void Bind(FrameworkElement area, IntPtr source)
+    /// <returns>False, wenn keine Vorschau möglich ist (DWM-Fehler, Quelle ohne Größe); dann bleibt der Bereich frei für einen Platzhalter.</returns>
+    internal bool Bind(FrameworkElement area, IntPtr source)
     {
-        var binding = new ThumbBinding { Area = area };
         IntPtr self = new WindowInteropHelper(this).Handle;
-        if (self != IntPtr.Zero && Native.DwmRegisterThumbnail(self, source, out IntPtr thumb) == 0)
+        if (self == IntPtr.Zero || Native.DwmRegisterThumbnail(self, source, out IntPtr thumb) != 0)
         {
-            binding.Thumb = thumb;
-            Native.DwmQueryThumbnailSourceSize(thumb, out binding.Source);
+            return false;
+        }
+
+        var binding = new ThumbBinding { Area = area, Thumb = thumb };
+        Native.DwmQueryThumbnailSourceSize(thumb, out binding.Source);
+        if (binding.Source.Width <= 0 || binding.Source.Height <= 0)
+        {
+            Native.DwmUnregisterThumbnail(thumb);
+            return false;
         }
         _bindings.Add(binding);
 
         // Ein Layoutdurchlauf kann vor dem Binden gelaufen sein; dann positioniert LayoutUpdated nichts mehr
         UpdateThumbnails();
+        return true;
     }
 
     internal void ReleaseThumbnails()

@@ -6,6 +6,7 @@
   "hotkey": "Ctrl+Alt+F",
   "exitHotkey": "Ctrl+Alt+Q",
   "priorityHotkey": "Ctrl+Alt+P",
+  "overflowCorner": true,
   "apps": [
     { "name": "Claude", "processes": [ "Claude.exe" ], "alwaysOutside": true },
     { "name": "WhatsApp Web", "processes": [ "brave.exe" ], "titleStartsWith": "WhatsApp Web", "alwaysOutside": true },
