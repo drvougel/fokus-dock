@@ -86,6 +86,7 @@ Weitere Felder eines Eintrags: `titleStartsWith` (Web-Apps, siehe unten), `alway
 Web-Apps (Brave-Verknüpfungen) sind eigene Apps:
 - Sie laufen in `brave.exe`. Ein Fenster gehört zur Web-App, wenn sein Titel mit `titleStartsWith` beginnt und nicht auf ` - Brave` endet. Normale Brave-Tabs bleiben bei Brave.
 - Web-Apps müssen in der Liste vor `Brave` stehen, sonst gehören ihre Fenster zu Brave.
+- **Vivaldi:** Web-Apps in `vivaldi.exe` erkennt Fokus-Dock von selbst. Fenster ohne ` - Vivaldi` im Titel sind Web-Apps, alle anderen gehören zum Browser-Eintrag. Jede Web-App wird als eigene App aufgenommen, benannt nach dem ersten Teil des Titels (vor ` - ` oder ` — `), und mit `titleStartsWith` gespeichert. Gibt es die Web-App schon als Eintrag, etwa aus Brave, wird `vivaldi.exe` dort ergänzt statt einen zweiten Eintrag anzulegen.
 
 Standardliste: Claude, die Web-App WhatsApp Web, Brave, PowerShell und Explorer. Eine Vorlage mit allen Feldern liegt in `config.example.json`. Kopiere sie nach `config.json` und passe sie an. `config.json` ist persönlich und wird nicht ins Repository übernommen.
 

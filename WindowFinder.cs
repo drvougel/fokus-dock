@@ -17,6 +17,9 @@ public sealed class WindowInfo
     public string ExePath { get; init; }
     /// <summary>Position in der Z-Reihenfolge beim letzten Einsammeln, 0 = oberstes Fenster.</summary>
     public int Z { get; set; }
+    /// <summary>Bei Web-Apps eines Browsers ohne Eintrag: stabiler Name aus dem Fenstertitel (erster Abschnitt), sonst null.</summary>
+    public string WebAppName { get; set; }
+
     /// <summary>Das Fenster deckt seinen Monitor ganz ab und hat keine Titelleiste (Spiel, F11, Vollbildvideo). Solche Fenster werden nicht platziert.</summary>
     public bool Fullscreen { get; init; }
 }
@@ -25,8 +28,17 @@ internal static class WindowFinder
 {
     private sealed record ProcInfo(string Name, string Path);
 
-    /// <summary>Suffix, den Brave an normale Tab-Fenster hängt. Web-App-Fenster haben ihn nicht.</summary>
-    private const string BrowserSuffix = " - Brave";
+    /// <summary>Suffixe, die Brave und Vivaldi an normale Tab-Fenster hängen. Web-App-Fenster haben sie nicht.</summary>
+    private static readonly string[] BrowserSuffixes = { " - Brave", " - Vivaldi" };
+
+    /// <summary>
+    /// Browser, deren Eintrag ohne titleStartsWith nur Fenster mit Suffix bekommt. Web-App-Fenster dieser Browser
+    /// werden so nicht vom Browser-Eintrag verschluckt und können als eigene Apps aufgenommen werden.
+    /// </summary>
+    private static readonly string[] StrictBrowsers = { "vivaldi.exe" };
+
+    private static bool HasBrowserSuffix(string title) =>
+        BrowserSuffixes.Any(s => title.EndsWith(s, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Fensterklassen der Shell: Desktop, Taskleisten. Werden nie als App-Fenster eingeordnet.</summary>
     private static readonly HashSet<string> ShellClasses = new(StringComparer.OrdinalIgnoreCase)
@@ -85,14 +97,44 @@ internal static class WindowFinder
         {
             WindowInfo info = Describe(hwnd, self);
             // Vollbildfenster (Spiele, F11, Videos) werden nie als neue App aufgenommen
-            if (info != null && !info.Fullscreen && !apps.Any(app => Matches(app, info)) && seen.Add(info.ProcessName))
+            if (info != null && !info.Fullscreen && !apps.Any(app => Matches(app, info)))
             {
-                result.Add(info);
+                info.WebAppName = WebAppNameOf(info);
+                // Web-Apps eines Browsers zählen einzeln, alle anderen Fenster einmal pro Prozess
+                if (seen.Add(info.WebAppName == null ? info.ProcessName : info.ProcessName + "|" + info.WebAppName))
+                {
+                    result.Add(info);
+                }
             }
             return true;
         }, IntPtr.Zero);
 
         return result;
+    }
+
+    /// <summary>
+    /// Name einer Web-App aus dem Fenstertitel: der erste Abschnitt vor " - " oder " — ", ohne Zähler wie "(2) ".
+    /// Null, wenn das Fenster keiner Web-App eines strengen Browsers (Vivaldi) gehört.
+    /// </summary>
+    private static string WebAppNameOf(WindowInfo info)
+    {
+        if (!StrictBrowsers.Contains(info.ProcessName, StringComparer.OrdinalIgnoreCase) || HasBrowserSuffix(info.Title))
+        {
+            return null;
+        }
+
+        string title = System.Text.RegularExpressions.Regex.Replace(info.Title.Trim(), @"^\(\d+\)\s*", "");
+        int cut = title.Length;
+        foreach (string separator in new[] { " - ", " — " })
+        {
+            int at = title.IndexOf(separator, StringComparison.Ordinal);
+            if (at > 0 && at < cut)
+            {
+                cut = at;
+            }
+        }
+        string name = title.Substring(0, cut).Trim();
+        return name.Length == 0 ? null : name;
     }
 
     /// <summary>Lesbarer App-Name: Dateibeschreibung der EXE, sonst Prozessname ohne Endung.</summary>
@@ -125,11 +167,12 @@ internal static class WindowFinder
 
         if (app.TitleStartsWith == null)
         {
-            return true;
+            // Bei Vivaldi gehören nur Fenster mit " - Vivaldi" zum Browser, der Rest sind Web-Apps
+            return !StrictBrowsers.Contains(info.ProcessName, StringComparer.OrdinalIgnoreCase) || HasBrowserSuffix(info.Title);
         }
 
         return info.Title.StartsWith(app.TitleStartsWith, StringComparison.OrdinalIgnoreCase)
-               && !info.Title.EndsWith(BrowserSuffix, StringComparison.OrdinalIgnoreCase);
+               && !HasBrowserSuffix(info.Title);
     }
 
     private static WindowInfo Describe(IntPtr hwnd, uint self)

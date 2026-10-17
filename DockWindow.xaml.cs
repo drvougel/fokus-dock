@@ -406,20 +406,47 @@ public partial class DockWindow : Window
         }
 
         var added = new List<string>();
+        bool merged = false;
         foreach (WindowInfo info in unmatched)
         {
-            string name = WindowFinder.DisplayName(info);
+            if (info.WebAppName != null)
+            {
+                // Dieselbe Web-App läuft schon als Eintrag (z. B. aus Brave): den Browser-Prozess dort ergänzen
+                AppEntry same = _config.Apps.FirstOrDefault(a =>
+                    a.TitleStartsWith != null && a.TitleStartsWith.Equals(info.WebAppName, StringComparison.OrdinalIgnoreCase));
+                if (same != null)
+                {
+                    if (!same.Processes.Contains(info.ProcessName, StringComparer.OrdinalIgnoreCase))
+                    {
+                        same.Processes.Add(info.ProcessName);
+                        merged = true;
+                    }
+                    continue;
+                }
+            }
+
+            string name = info.WebAppName ?? WindowFinder.DisplayName(info);
             if (IndexOfApp(name) >= 0)
             {
                 name = $"{name} ({Path.GetFileNameWithoutExtension(info.ProcessName)})";
             }
-            _config.Apps.Add(new AppEntry { Name = name, Processes = new List<string> { info.ProcessName } });
+            _config.Apps.Add(new AppEntry
+            {
+                Name = name,
+                Processes = new List<string> { info.ProcessName },
+                TitleStartsWith = info.WebAppName,
+            });
             added.Add(name);
+        }
+
+        if (added.Count == 0 && !merged)
+        {
+            return;
         }
 
         // Ein Toast für alle neuen Apps dieses Durchgangs; ein Speicherfehler geht vor
         SaveConfig(out bool notified);
-        if (notified)
+        if (notified || added.Count == 0)
         {
             return;
         }
