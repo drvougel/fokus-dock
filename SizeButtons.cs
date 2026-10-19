@@ -95,7 +95,7 @@ internal static class TileOps
         }
 
         Set(entry, x, y, w, h);
-        var added = new CellEntry { Id = NewId(config), Side = g.Side };
+        var added = new CellEntry { Id = NewId(config), Side = g.Side, Corner = entry is CellEntry sourceCell && sourceCell.Corner };
         Set(added, newX, newY, newW, newH);
         int at = entry is CellEntry c ? config.Cells.IndexOf(c) + 1 : config.Cells.Count;
         config.Cells.Insert(at, added);
@@ -135,6 +135,11 @@ internal static class TileOps
         else
         {
             Set(entry, g.X, Math.Min(g.Y, take.Y), g.W, g.H + take.H);
+        }
+        // Nimmt ein Platz einen Sammelplatz auf, ist das zusammengelegte Viereck ebenfalls einer
+        if (entry is CellEntry merged && take.Corner)
+        {
+            merged.Corner = true;
         }
         config.Cells.Remove(take);
         return true;

@@ -19,6 +19,7 @@ internal static class WindowPlacer
     public static bool Place(IntPtr hwnd, NativeRect rect)
     {
         Restore(hwnd, includeMinimized: true);
+        ClearTopmost(hwnd);
         if (!SetPosition(hwnd, Native.HWND_TOP, rect, Native.SWP_SHOWWINDOW))
         {
             return false;
@@ -48,6 +49,7 @@ internal static class WindowPlacer
     public static bool PlaceInSlot(IntPtr hwnd, NativeRect rect, IntPtr insertAfter, bool front)
     {
         Restore(hwnd, includeMinimized: front);
+        ClearTopmost(hwnd);
         return SetPosition(hwnd, insertAfter, rect, front ? Native.SWP_SHOWWINDOW : 0);
     }
 
@@ -65,6 +67,19 @@ internal static class WindowPlacer
         Native.keybd_event(Native.VK_MENU, 0, 0, IntPtr.Zero);
         Native.keybd_event(Native.VK_MENU, 0, Native.KEYEVENTF_KEYUP, IntPtr.Zero);
         Native.SetForegroundWindow(hwnd);
+    }
+
+    /// <summary>
+    /// „Immer im Vordergrund“ wegnehmen. Ein Fenster, das hinter einem solchen eingeordnet wird, erbt den Zustand, und so
+    /// stehen bald alle Fenster eines Platzes über den anderen: eine App, die in der Taskleiste angeklickt wird, bliebe verdeckt.
+    /// </summary>
+    private static void ClearTopmost(IntPtr hwnd)
+    {
+        if ((Native.GetWindowLong(hwnd, Native.GWL_EXSTYLE) & Native.WS_EX_TOPMOST) != 0)
+        {
+            Native.SetWindowPos(hwnd, Native.HWND_NOTOPMOST, 0, 0, 0, 0,
+                Native.SWP_NOMOVE | Native.SWP_NOSIZE | Native.SWP_NOACTIVATE);
+        }
     }
 
     private static bool SetPosition(IntPtr hwnd, IntPtr insertAfter, NativeRect rect, uint extraFlags)

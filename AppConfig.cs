@@ -329,6 +329,13 @@ public sealed class NotificationAreaEntry
 /// <summary>Ein Platz außen. Anteile beziehen sich auf den Seitenbereich (links oder rechts).</summary>
 public sealed class CellEntry
 {
+    /// <summary>
+    /// Die Zelle ist ein Sammelplatz. Es kann mehrere geben: Teilt man einen Sammelplatz, wird auch die neue Hälfte einer.
+    /// Fehlt die Angabe überall, gilt die unterste Zelle rechts als Sammelplatz.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Corner { get; set; }
+
     public string Id { get; set; } = "";
     public string Side { get; set; } = "left";
     public double X { get; set; }

@@ -100,6 +100,8 @@ internal static class Native
 
     public static readonly IntPtr HWND_TOP = IntPtr.Zero;
     public static readonly IntPtr HWND_TOPMOST = new(-1);
+    public static readonly IntPtr HWND_NOTOPMOST = new(-2);
+    public const int WS_EX_TOPMOST = 0x00000008;
     public const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
     public const int DWMWCP_ROUND = 2;
     public const uint VK_ESCAPE = 0x1B;

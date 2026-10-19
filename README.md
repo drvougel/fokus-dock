@@ -99,6 +99,10 @@ Standardliste: Claude, die Web-App WhatsApp Web, Brave, PowerShell und Explorer.
 - Die Spalten reservieren keinen Platz im Arbeitsbereich. Maximierte Fenster werden am linken und rechten Rand überlagert.
 - Fenster, die man verschiebt oder in der Größe ändert, werden nicht sofort zurückgesetzt. Die Plätze werden neu eingerichtet, wenn sich die Fensterliste der App ändert.
 
+## Taskleiste
+
+Klickst du eine App in der Windows-Taskleiste an, gleicht Fokus-Dock sofort ab: Das Fenster liegt in seinem Platz (oder im Sammelplatz) ganz vorn und ist sichtbar, von dort kannst du es weiter einsortieren. Dazu nimmt Fokus-Dock den Fenstern, die es in Plätze oder in die Mitte setzt, „immer im Vordergrund“ weg. Sonst würde ein solches Fenster alle anderen im selben Platz mit nach oben ziehen, und eine angeklickte App bliebe dahinter verdeckt. Fenster, die Fokus-Dock nicht verwaltet (Administrator, „nicht verwalten“), bleiben unangetastet.
+
 ## Plätze teilen und zusammenlegen
 
 Oben in der Mitte jedes Platzes und des Benachrichtigungsfelds stehen drei Knöpfe, dezent, bis die Maus darüber ist:
@@ -106,7 +110,7 @@ Oben in der Mitte jedes Platzes und des Benachrichtigungsfelds stehen drei Knöp
 - **Viereck mit waagerechter Linie:** teilt in oben und unten, die Höhe wird halbiert.
 - **Plus:** legt zusammen. Der Platz wird doppelt so groß und nimmt den Nachbarn mit gleicher Kante auf, bei einem schmalen Platz zuerst den neben ihm, sonst den darüber oder darunter.
 
-Beim Teilen entsteht in der freien Hälfte ein neuer Platz. Liegen in der geteilten Zelle hinter dem vordersten Fenster weitere Fenster, kommen genau diese in den neuen Platz (gestapelt, vorne das zuletzt aktive) und bleiben dort, bis du sie in die Mitte holst, woanders einrastest oder schließt. Gibt es keine Hintergrundfenster, füllt Fokus-Dock den Platz mit der nächsten laufenden App ohne Platz. Die Gesamtgröße der Spalten und die Breite der Mitte ändern sich nie, und die Mitte hat keine Knöpfe. Geteilt wird nur bis etwa ein Fünftel der Spaltenbreite und ein Zehntel der Spaltenhöhe. Ein aufgenommener Platz verliert seine feste App, die App bekommt beim nächsten Abgleich einen anderen Platz. Plätze und Teilung werden in `config.json` gespeichert, eine Teilung lässt sich auch im Layout-Editor sehen und ändern. Gibt es keine weitere Teilung oder keinen Nachbarn, erscheint ein Hinweis. Abschalten mit `"sizeButtons": false`.
+Beim Teilen entsteht in der freien Hälfte ein neuer Platz. Teilst du den Sammelplatz, ist auch die neue Hälfte ein Sammelplatz (gespeichert als `"corner": true` in der Zelle): Die Fenster hinter dem vordersten wandern dorthin, alle neuen Fenster ohne Platz kommen in den ersten Sammelplatz. Liegen in der geteilten Zelle hinter dem vordersten Fenster weitere Fenster, kommen genau diese in den neuen Platz (gestapelt, vorne das zuletzt aktive) und bleiben dort, bis du sie in die Mitte holst, woanders einrastest oder schließt. Gibt es keine Hintergrundfenster, füllt Fokus-Dock den Platz mit der nächsten laufenden App ohne Platz. Die Gesamtgröße der Spalten und die Breite der Mitte ändern sich nie, und die Mitte hat keine Knöpfe. Geteilt wird nur bis etwa ein Fünftel der Spaltenbreite und ein Zehntel der Spaltenhöhe. Ein aufgenommener Platz verliert seine feste App, die App bekommt beim nächsten Abgleich einen anderen Platz. Plätze und Teilung werden in `config.json` gespeichert, eine Teilung lässt sich auch im Layout-Editor sehen und ändern. Gibt es keine weitere Teilung oder keinen Nachbarn, erscheint ein Hinweis. Abschalten mit `"sizeButtons": false`.
 
 ## Benachrichtigungsfeld
 
@@ -144,6 +148,7 @@ dotnet publish -c Release -r win-x64 --self-contained false -o publish
 | `Theme.cs` | Dunkles Farbschema und Fensterstil (Farben in `App.xaml`) |
 | `OverlayWindow.cs` | Durchsichtige Fenster ohne Fokus, Zielvorschau beim Ziehen |
 | `Toast.cs` | Kurze Hinweise unten am Bildschirm |
+| `ForegroundHook.cs` | Meldet Wechsel des Vordergrundfensters (Taskleiste, Alt+Tab) für den sofortigen Abgleich |
 | `SizeButtons.cs` | Teilen und Zusammenlegen der Plätze, die Knöpfe oben in der Mitte |
 | `NotificationPanel.cs` | Benachrichtigungsfeld: Windows-Benachrichtigungen als Karten |
 | `HelpWindow.cs` | Bedienungshilfe (Maus, Tastatur, Begriffe) |

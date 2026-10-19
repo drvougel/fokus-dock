@@ -277,7 +277,7 @@ public sealed class LayoutWindow : Window
     private List<string> _appNames = new();
 
     private static List<CellEntry> Copy(IEnumerable<CellEntry> cells) =>
-        cells.Select(c => new CellEntry { Id = c.Id, Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, App = c.App }).ToList();
+        cells.Select(c => new CellEntry { Id = c.Id, Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, App = c.App, Corner = c.Corner }).ToList();
 
     private bool IsOverflow(CellEntry cell) => _cells.IndexOf(cell) == DockLayout.OverflowIndex(_cells, _overflowEnabled);
 
@@ -644,8 +644,8 @@ public sealed class LayoutWindow : Window
         }
 
         CellEntry c = _cells[index];
-        var first = new CellEntry { Id = c.Id, Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, App = c.App };
-        var second = new CellEntry { Id = NewId(), Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H };
+        var first = new CellEntry { Id = c.Id, Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, App = c.App, Corner = c.Corner };
+        var second = new CellEntry { Id = NewId(), Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, Corner = c.Corner };
 
         if (horizontal)
         {
