@@ -66,6 +66,8 @@ Die Datei liegt neben `FokusDock.exe`. Fehlt sie, gelten die Standardwerte. Nach
 | `exitHotkey` | Tastenkürzel zum Beenden, Standard `"Ctrl+Alt+Q"`. |
 | `priorityHotkey` | Tastenkürzel für die Prioritätsliste, Standard `"Ctrl+Alt+P"`. |
 | `overflowCorner` | Sammelplatz unten rechts für alle Apps ohne eigenen Platz (Standard `true`). |
+| `notifications` | Bereich für das Benachrichtigungsfeld, siehe unten. Ohne Eintrag gibt es kein Feld. |
+| `sizeButtons` | Knöpfe zum Teilen und Zusammenlegen oben in der Mitte der Plätze (Standard `true`). |
 | `cells` | Die Plätze als Rechtecke (`id`, `side` `left`/`right`, `x`, `y`, `w`, `h` als Anteil 0 bis 1 der Seitenspalte, `app` = feste App). Fehlt `cells`, entsteht das Raster aus `tilesPerSide`. Am besten im Layout-Fenster bearbeiten. |
 | `apps` | Liste der Apps. Die Reihenfolge ist die Startbelegung der Plätze: erst links von oben nach unten, dann rechts. Apps ohne Platz bleiben ohne Platz. Neu erkannte Apps werden automatisch hinten angehängt. |
 
@@ -97,7 +99,30 @@ Standardliste: Claude, die Web-App WhatsApp Web, Brave, PowerShell und Explorer.
 - Die Spalten reservieren keinen Platz im Arbeitsbereich. Maximierte Fenster werden am linken und rechten Rand überlagert.
 - Fenster, die man verschiebt oder in der Größe ändert, werden nicht sofort zurückgesetzt. Die Plätze werden neu eingerichtet, wenn sich die Fensterliste der App ändert.
 
+## Plätze teilen und zusammenlegen
+
+Oben in der Mitte jedes Platzes und des Benachrichtigungsfelds stehen drei Knöpfe, dezent, bis die Maus darüber ist:
+- **Viereck mit senkrechter Linie:** teilt in links und rechts, die Breite wird halbiert.
+- **Viereck mit waagerechter Linie:** teilt in oben und unten, die Höhe wird halbiert.
+- **Plus:** legt zusammen. Der Platz wird doppelt so groß und nimmt den Nachbarn mit gleicher Kante auf, bei einem schmalen Platz zuerst den neben ihm, sonst den darüber oder darunter.
+
+Beim Teilen entsteht in der freien Hälfte ein neuer Platz. Liegen in der geteilten Zelle hinter dem vordersten Fenster weitere Fenster, kommen genau diese in den neuen Platz (gestapelt, vorne das zuletzt aktive) und bleiben dort, bis du sie in die Mitte holst, woanders einrastest oder schließt. Gibt es keine Hintergrundfenster, füllt Fokus-Dock den Platz mit der nächsten laufenden App ohne Platz. Die Gesamtgröße der Spalten und die Breite der Mitte ändern sich nie, und die Mitte hat keine Knöpfe. Geteilt wird nur bis etwa ein Fünftel der Spaltenbreite und ein Zehntel der Spaltenhöhe. Ein aufgenommener Platz verliert seine feste App, die App bekommt beim nächsten Abgleich einen anderen Platz. Plätze und Teilung werden in `config.json` gespeichert, eine Teilung lässt sich auch im Layout-Editor sehen und ändern. Gibt es keine weitere Teilung oder keinen Nachbarn, erscheint ein Hinweis. Abschalten mit `"sizeButtons": false`.
+
+## Benachrichtigungsfeld
+
+Ein Bereich neben den Plätzen zeigt die Windows-Benachrichtigungen schlicht als Karten, neueste oben: Name der App, Zeit, Titel und Text. Ein Klick auf eine Karte räumt sie weg (auch aus dem Info-Center), „Alle löschen“ leert alles. Das Feld liegt über den anderen Fenstern, nimmt keinen Fokus und verschwindet bei ausgeschaltetem Fokus-Dock und bei Vollbild.
+
+Der Bereich steht in `config.json` und liegt außerhalb von `cells`, dort stehen also keine Fenster. Die Anteile gelten wie bei einem Platz für den Seitenbereich. Eine halbe Zelle unten rechts in der linken Spalte:
+
+```json
+"notifications": { "side": "left", "x": 0.5, "y": 0.6667, "w": 0.5, "h": 0.3333 }
+```
+
+Beim ersten Mal fragt Windows nach der Erlaubnis, Benachrichtigungen zu lesen (Einstellungen › Datenschutz und Sicherheit › Benachrichtigungen). Die Pop-ups von Windows selbst bleiben, sie lassen sich über die Windows-Einstellungen oder „Nicht stören“ abschalten.
+
 ## Build
+
+Das Projekt zielt auf `net8.0-windows10.0.19041.0`, damit die Windows-Benachrichtigungen lesbar sind. Beim ersten Build lädt NuGet dafür das Paket `Microsoft.Windows.SDK.NET.Ref` (etwa 9 MB). Ist auf dem Rechner keine NuGet-Quelle eingerichtet: `dotnet restore --source https://api.nuget.org/v3/index.json`.
 
 ```
 dotnet build -c Release
@@ -119,6 +144,8 @@ dotnet publish -c Release -r win-x64 --self-contained false -o publish
 | `Theme.cs` | Dunkles Farbschema und Fensterstil (Farben in `App.xaml`) |
 | `OverlayWindow.cs` | Durchsichtige Fenster ohne Fokus, Zielvorschau beim Ziehen |
 | `Toast.cs` | Kurze Hinweise unten am Bildschirm |
+| `SizeButtons.cs` | Teilen und Zusammenlegen der Plätze, die Knöpfe oben in der Mitte |
+| `NotificationPanel.cs` | Benachrichtigungsfeld: Windows-Benachrichtigungen als Karten |
 | `HelpWindow.cs` | Bedienungshilfe (Maus, Tastatur, Begriffe) |
 | `Native.cs` | P/Invoke (user32, dwmapi, kernel32) |
 | `AppConfig.cs`, `Monitors.cs` | Config und Monitorhilfen |

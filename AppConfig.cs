@@ -33,6 +33,15 @@ public sealed class AppConfig
     /// <summary>Sammelplatz unten rechts: alle Apps ohne eigenen Platz liegen dort übereinander.</summary>
     public bool OverflowCorner { get; set; } = true;
 
+    /// <summary>„−“ und „+“ oben in der Mitte jedes Vierecks: stufenweise kleiner und größer machen.</summary>
+    public bool SizeButtons { get; set; } = true;
+
+    /// <summary>
+    /// Benachrichtigungsfeld: ein Bereich neben den Plätzen, in dem die Windows-Benachrichtigungen schlicht angezeigt werden.
+    /// Er liegt außerhalb von cells, dort stehen also keine Fenster. Fehlt der Eintrag, gibt es kein Feld.
+    /// </summary>
+    public NotificationAreaEntry Notifications { get; set; }
+
     /// <summary>
     /// Prioritätsliste: vorne = wichtiger. Die Reihenfolge bestimmt, welche Apps einen Platz außen bekommen.
     /// Startbelegung: erst links von oben nach unten, dann rechts.
@@ -74,7 +83,57 @@ public sealed class AppConfig
         var config = JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(path), options) ?? CreateDefault();
         config.FileExisted = true;
         config.Normalize();
+        config.NormalizeNotifications();
         return config;
+    }
+
+    /// <summary>Ein ungültiger Bereich fürs Benachrichtigungsfeld wird verworfen, mit Hinweis.</summary>
+    private void NormalizeNotifications()
+    {
+        NotificationAreaEntry n = Notifications;
+        if (n == null)
+        {
+            return;
+        }
+
+        n.Side = string.Equals(n.Side, "right", StringComparison.OrdinalIgnoreCase) ? "right" : "left";
+        if (!IsFraction(n.X, allowZero: true) || !IsFraction(n.Y, allowZero: true) ||
+            !IsFraction(n.W, allowZero: false) || !IsFraction(n.H, allowZero: false))
+        {
+            Warnings.Add("Der Bereich notifications hat eine ungültige Größe, das Benachrichtigungsfeld bleibt aus.");
+            Notifications = null;
+            return;
+        }
+
+        DropCellsUnderNotifications();
+    }
+
+    /// <summary>
+    /// Zellen, die das Benachrichtigungsfeld zu mehr als der Hälfte bedeckt, fallen weg: Ein Fenster darunter wäre
+    /// nicht zu sehen. Gilt beim Laden und nach dem Layout-Editor, der solche Zellen wieder anlegen kann.
+    /// </summary>
+    public void DropCellsUnderNotifications()
+    {
+        NotificationAreaEntry n = Notifications;
+        if (n == null || Cells == null)
+        {
+            return;
+        }
+
+        foreach (CellEntry c in Cells.ToList())
+        {
+            if (c.Side != n.Side)
+            {
+                continue;
+            }
+
+            double overlapX = Math.Min(c.X + c.W, n.X + n.W) - Math.Max(c.X, n.X);
+            double overlapY = Math.Min(c.Y + c.H, n.Y + n.H) - Math.Max(c.Y, n.Y);
+            if (overlapX > 0 && overlapY > 0 && overlapX * overlapY > 0.5 * c.W * c.H)
+            {
+                Cells.Remove(c);
+            }
+        }
     }
 
     /// <summary>
@@ -255,6 +314,16 @@ public sealed class AppConfig
         Processes = new List<string> { "brave.exe" },
         TitleStartsWith = titleStartsWith,
     });
+}
+
+/// <summary>Bereich des Benachrichtigungsfelds. Anteile wie bei einem Platz: sie beziehen sich auf den Seitenbereich.</summary>
+public sealed class NotificationAreaEntry
+{
+    public string Side { get; set; } = "left";
+    public double X { get; set; }
+    public double Y { get; set; }
+    public double W { get; set; } = 1;
+    public double H { get; set; } = 1;
 }
 
 /// <summary>Ein Platz außen. Anteile beziehen sich auf den Seitenbereich (links oder rechts).</summary>

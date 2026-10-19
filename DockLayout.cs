@@ -69,6 +69,28 @@ internal sealed class DockLayout
         return best >= 0 ? best : cells.Count - 1;
     }
 
+    /// <summary>Bereich des Benachrichtigungsfelds in Pixeln, null ohne Eintrag in der Konfiguration.</summary>
+    public static NativeRect? NotificationRect(AppConfig config)
+    {
+        NotificationAreaEntry n = config.Notifications;
+        if (n == null)
+        {
+            return null;
+        }
+
+        DockLayout layout = Compute(config);
+        NativeRect side = n.Side == "right" ? layout.Right : layout.Left;
+        int width = side.Right - side.Left;
+        int height = side.Bottom - side.Top;
+        return new NativeRect
+        {
+            Left = side.Left + (int)Math.Round(n.X * width),
+            Right = side.Left + (int)Math.Round((n.X + n.W) * width),
+            Top = side.Top + (int)Math.Round(n.Y * height),
+            Bottom = side.Top + (int)Math.Round((n.Y + n.H) * height),
+        };
+    }
+
     /// <summary>Plätze in Pixeln, in der Reihenfolge von config.Cells.</summary>
     public static NativeRect[] SlotRects(AppConfig config)
     {

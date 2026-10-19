@@ -53,6 +53,11 @@ public partial class DockWindow : Window
     private int _listSlot = -1;              // Kachelplatz, dessen Fensterliste offen ist
     private NativeRect _listRect;            // Pixelrechteck der offenen Fensterliste (Klick-daneben-Test)
     private bool _escRegistered;             // Esc-Kürzel für die Liste ist belegt
+    private NotificationPanel _notifyPanel;
+    private NativeRect _notifyRect;
+    private readonly List<SizeButtons> _sizeButtons = new();
+    private string _overflowId;   // Zellen-Id des Sammelplatzes, null = noch nicht bestimmt
+    private readonly Dictionary<string, List<IntPtr>> _pins = new();   // Zellen-Id → Fenster, die fest in dieser Zelle liegen (nach dem Teilen)
     private bool _initialized;
     private bool _enabled = true;            // Spalten ein/aus (Hotkey)
     private bool _fullscreenPause;           // Vollbild läuft (Spiel, Video, Präsentation): Fokus-Dock fasst keine Fenster an
@@ -241,10 +246,203 @@ public partial class DockWindow : Window
         return text.Length == 0 ? "(nicht verfügbar)" : text + " (nicht verfügbar)";
     }
 
+    /// <summary>
+    /// Benachrichtigungsfeld zeigen, wo es konfiguriert ist: nur bei eingeschaltetem Fokus-Dock und ohne Vollbild.
+    /// Die Lage wird jede Sekunde neu gesetzt, das kostet nichts und fängt Auflösungs- und Arbeitsbereichswechsel mit ab.
+    /// </summary>
+    private void UpdateNotificationPanel()
+    {
+        NativeRect? rect = DockLayout.NotificationRect(_config);
+        if (rect == null || !_enabled || _fullscreenPause)
+        {
+            _notifyPanel?.Hide();
+            return;
+        }
+
+        try
+        {
+            _notifyPanel ??= new NotificationPanel();
+            // Nur neu setzen, wenn sich etwas geändert hat: so bleibt die Stapelreihenfolge zu den Größenknöpfen stabil
+            NativeRect r = rect.Value;
+            if (!_notifyPanel.IsVisible || r.Left != _notifyRect.Left || r.Top != _notifyRect.Top
+                || r.Right != _notifyRect.Right || r.Bottom != _notifyRect.Bottom)
+            {
+                _notifyRect = r;
+                _notifyPanel.PlacePixels(r);
+            }
+        }
+        catch (Exception ex)
+        {
+            // Ein Fehler im Feld darf Fokus-Dock nicht stören: ins Protokoll und das Feld abschalten
+            App.WriteLog("Benachrichtigungsfeld: " + ex);
+            _config.Notifications = null;
+            _notifyPanel = null;
+        }
+    }
+
+    /// <summary>
+    /// Knöpfe oben in der Mitte jedes Vierecks (Plätze und Benachrichtigungsfeld): teilen oder zusammenlegen.
+    /// Die Mitte hat keine, und die Gesamtgröße der Spalten ändert sich nie. Die Knöpfe folgen den Vierecken bei jedem Abgleich.
+    /// </summary>
+    private void UpdateSizeButtons()
+    {
+        var targets = new List<(NativeRect Rect, Action<SizeAction> Act)>();
+        if (_config.SizeButtons && _enabled && !_fullscreenPause)
+        {
+            NativeRect[] rects = DockLayout.SlotRects(_config);
+            for (int i = 0; i < rects.Length; i++)
+            {
+                CellEntry cell = _config.Cells[i];
+                targets.Add((rects[i], action => ChangeTile(cell, action)));
+            }
+
+            NativeRect? area = DockLayout.NotificationRect(_config);
+            if (area != null)
+            {
+                NotificationAreaEntry n = _config.Notifications;
+                targets.Add((area.Value, action => ChangeTile(n, action)));
+            }
+        }
+
+        try
+        {
+            while (_sizeButtons.Count < targets.Count)
+            {
+                _sizeButtons.Add(new SizeButtons());
+            }
+            for (int i = 0; i < _sizeButtons.Count; i++)
+            {
+                if (i < targets.Count)
+                {
+                    _sizeButtons[i].Act = targets[i].Act;
+                    _sizeButtons[i].PlaceAtTop(targets[i].Rect);
+                }
+                else
+                {
+                    _sizeButtons[i].Hide();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            // Ein Fehler bei den Knöpfen darf Fokus-Dock nicht stören: ins Protokoll und abschalten
+            App.WriteLog("Größenknöpfe: " + ex);
+            _config.SizeButtons = false;
+            foreach (SizeButtons b in _sizeButtons)
+            {
+                b.Close();
+            }
+            _sizeButtons.Clear();
+        }
+    }
+
+    /// <summary>
+    /// Ein Viereck teilen oder zusammenlegen. Die Zellenliste ändert sich dabei: Die Belegung der Plätze wird deshalb
+    /// über die Zellen-Id gerettet und danach neu zugeordnet. Ein neuer Platz bleibt leer, bis der Abgleich eine laufende
+    /// App ohne Platz hineinsetzt. Geht es nicht weiter (zu klein, kein Nachbar), erscheint ein Hinweis.
+    /// </summary>
+    private void ChangeTile(object entry, SizeAction action)
+    {
+        var assigned = new Dictionary<string, int>();
+        for (int s = 0; s < _config.Cells.Count && s < _slots.Length; s++)
+        {
+            if (_slots[s] >= 0)
+            {
+                assigned[_config.Cells[s].Id] = _slots[s];
+            }
+        }
+
+        // Beim Teilen einer Zelle: Fenster, die hinter dem vordersten liegen, kommen in die neue Zelle,
+        // statt dass dort irgendeine andere App landet. Der Sammelplatz ist ausgenommen, er füllt sich über die Platzvergabe.
+        List<IntPtr> behind = null;
+        if (entry is CellEntry splitCell && action != SizeAction.Merge)
+        {
+            int index = _config.Cells.IndexOf(splitCell);
+            if (index >= 0 && index != OverflowSlot)
+            {
+                List<WindowInfo> shown = WindowsOfSlot(index).Where(w => !w.Fullscreen).ToList();
+                if (shown.Count >= 2)
+                {
+                    behind = shown.Skip(1).Select(w => w.Hwnd).ToList();
+                }
+            }
+        }
+        var oldIds = new HashSet<string>(_config.Cells.Select(c => c.Id));
+
+        // Vorderstes Fenster der geklickten Zelle: es soll nach dem Zusammenlegen vorne bleiben (siehe unten)
+        IntPtr frontBefore = IntPtr.Zero;
+        if (entry is CellEntry clicked)
+        {
+            int at = _config.Cells.IndexOf(clicked);
+            if (at >= 0)
+            {
+                frontBefore = WindowsOfSlot(at).FirstOrDefault(w => !w.Fullscreen)?.Hwnd ?? IntPtr.Zero;
+            }
+        }
+
+        bool changed = action switch
+        {
+            SizeAction.SplitSideBySide => TileOps.Split(_config, entry, sideBySide: true),
+            SizeAction.SplitStacked => TileOps.Split(_config, entry, sideBySide: false),
+            _ => TileOps.Merge(_config, entry),
+        };
+        if (!changed)
+        {
+            Toast.Show(action == SizeAction.Merge ? "Kein Nachbar zum Zusammenlegen." : "Kleiner geht es nicht.");
+            return;
+        }
+
+        _config.DropCellsUnderNotifications();
+        _slots = _config.Cells.Select(c => assigned.TryGetValue(c.Id, out int app) ? app : -1).ToArray();
+        _slotSignature = new string[_slots.Length];
+
+        // Der Sammelplatz hat nie eine eigene App: nimmt das geklickte Viereck ihn beim Zusammenlegen auf,
+        // gehören seine Fenster ab jetzt zum Sammelplatz
+        int overflowNow = OverflowSlot;
+        if (overflowNow >= 0)
+        {
+            _slots[overflowNow] = -1;
+        }
+
+        // Feste Fenster von Zellen, die es nicht mehr gibt, loslassen; dann die neue Zelle mit den Hintergrundfenstern belegen
+        PrunePins();
+        CellEntry created = _config.Cells.FirstOrDefault(c => !oldIds.Contains(c.Id));
+        if (behind != null && created != null)
+        {
+            foreach (IntPtr hwnd in behind)
+            {
+                Unpin(hwnd);
+            }
+            _pins[created.Id] = behind;
+        }
+
+        HideList();
+        SaveConfig(out _);
+        Refresh();
+
+        // Hat das geklickte Viereck den Sammelplatz aufgenommen, kommen alle Fenster ohne Platz zu seinen dazu.
+        // Sein bisher vorderstes Fenster holen wir nach vorn, damit es wirklich das geklickte Viereck ist, das größer wird.
+        if (action == SizeAction.Merge && frontBefore != IntPtr.Zero && Native.IsWindow(frontBefore) && entry is CellEntry kept)
+        {
+            int at = _config.Cells.IndexOf(kept);
+            if (at >= 0 && at == OverflowSlot)
+            {
+                WindowPlacer.PlaceInSlot(frontBefore, DockLayout.SlotRects(_config)[at], Native.HWND_TOP, front: true);
+                _slotSignature[at] = null;
+                Refresh();
+            }
+        }
+    }
+
     private void OnClosed(object sender, EventArgs e)
     {
         try
         {
+            foreach (SizeButtons b in _sizeButtons)
+            {
+                b.Close();
+            }
+            _notifyPanel?.Close();
             _tray?.Dispose();   // zuerst: das Symbol verschwindet sofort aus dem Infobereich
             _pollTimer.Stop();
             _refreshTimer.Stop();
@@ -557,6 +755,7 @@ public partial class DockWindow : Window
         AddDiscoveredApps();
         List<WindowInfo>[] groups = WindowFinder.Collect(_config.Apps);
         _groups = groups;
+        PrunePins();
 
         if (!_initialized && !_fullscreenPause)
         {
@@ -587,6 +786,9 @@ public partial class DockWindow : Window
         {
             HideList();
         }
+
+        UpdateNotificationPanel();
+        UpdateSizeButtons();
 
         // Offene Prioritätsliste: Status und Plätze nachziehen (ändert nur Texte, außer die App-Folge weicht ab)
         if (_priority != null && _priority.IsVisible)
@@ -686,11 +888,10 @@ public partial class DockWindow : Window
     private void AssignSlots(bool onlyRunning)
     {
         Array.Fill(_slots, -1);
-        int overflow = OverflowSlot;
         for (int c = 0; c < _config.Cells.Count; c++)
         {
             int app = IndexOfApp(_config.Cells[c].App);
-            if (c != overflow && app >= 0 && !IsIgnored(app) && CanHaveSlot(app) && (!onlyRunning || SlotWindows(app).Count > 0) && !_slots.Contains(app))
+            if (!IsReserved(c) && app >= 0 && !IsIgnored(app) && CanHaveSlot(app) && (!onlyRunning || SlotWindows(app).Count > 0) && !_slots.Contains(app))
             {
                 _slots[c] = app;
             }
@@ -704,7 +905,7 @@ public partial class DockWindow : Window
                 continue;
             }
 
-            while (cell < _slots.Length && (_slots[cell] >= 0 || cell == overflow))
+            while (cell < _slots.Length && (_slots[cell] >= 0 || IsReserved(cell)))
             {
                 cell++;
             }
@@ -721,11 +922,10 @@ public partial class DockWindow : Window
     /// <summary>Eine App mit fester Zelle wandert zurück in ihre Zelle, sobald sie läuft. Dort verdrängt sie die App.</summary>
     private void EnforceHomes()
     {
-        int overflow = OverflowSlot;
         for (int c = 0; c < _config.Cells.Count; c++)
         {
             int app = IndexOfApp(_config.Cells[c].App);
-            if (c == overflow || app < 0 || _slots[c] == app || !CanHaveSlot(app) || SlotWindows(app).Count == 0)
+            if (IsReserved(c) || app < 0 || _slots[c] == app || !CanHaveSlot(app) || SlotWindows(app).Count == 0)
             {
                 continue;
             }
@@ -744,6 +944,8 @@ public partial class DockWindow : Window
     private void ApplyLayout(List<CellEntry> cells, int centerPercent, bool save)
     {
         _config.Cells = cells;
+        _config.DropCellsUnderNotifications();
+        cells = _config.Cells;
         _config.CenterPercent = Math.Clamp(centerPercent, 40, 60);
         _slots = new int[cells.Count];
         _slotSignature = new string[cells.Count];
@@ -823,10 +1025,9 @@ public partial class DockWindow : Window
     /// </summary>
     private void FillGaps(List<WindowInfo>[] groups)
     {
-        int overflow = OverflowSlot;
         for (int s = 0; s < _slots.Length; s++)
         {
-            if (s == overflow || (_slots[s] >= 0 && SlotWindows(_slots[s]).Count > 0))
+            if (IsReserved(s) || (_slots[s] >= 0 && SlotWindows(_slots[s]).Count > 0))
             {
                 continue;
             }
@@ -864,7 +1065,7 @@ public partial class DockWindow : Window
         int overflow = OverflowSlot;
         for (int s = 0; s < _slots.Length; s++)
         {
-            if (s != overflow && _slots[s] < 0)
+            if (s != overflow && !HasPins(s) && _slots[s] < 0)
             {
                 _slotSignature[s] = null;
                 continue;
@@ -932,7 +1133,7 @@ public partial class DockWindow : Window
                 break;
             }
         }
-        if (slot < 0 || (_slots[slot] < 0 && slot != OverflowSlot))
+        if (slot < 0 || (_slots[slot] < 0 && slot != OverflowSlot && !HasPins(slot)))
         {
             return false;
         }
@@ -962,7 +1163,66 @@ public partial class DockWindow : Window
 
     /// <summary>Fenster einer App, die außen stehen können: alle außer dem Mitte-Fenster. Nicht verwaltete Apps haben keine.</summary>
     private List<WindowInfo> SlotWindows(int app) =>
-        IsIgnored(app) ? new List<WindowInfo>() : _groups[app].Where(w => w.Hwnd != _centerHwnd && !_blocked.Contains(w.Hwnd)).ToList();
+        IsIgnored(app) ? new List<WindowInfo>() : _groups[app].Where(w => w.Hwnd != _centerHwnd && !_blocked.Contains(w.Hwnd) && !IsPinned(w.Hwnd)).ToList();
+
+    /// <summary>Ob das Fenster fest in einer Zelle liegt (beim Teilen aus dem Hintergrund einer Zelle dorthin gelegt).</summary>
+    private bool IsPinned(IntPtr hwnd) => _pins.Values.Any(list => list.Contains(hwnd));
+
+    /// <summary>Ob die Zelle Fenster fest zugeordnet hat. Solche Zellen bekommen keine App aus der Platzvergabe.</summary>
+    private bool HasPins(int slot) =>
+        slot >= 0 && slot < _config.Cells.Count && _pins.TryGetValue(_config.Cells[slot].Id, out List<IntPtr> list) && list.Count > 0;
+
+    /// <summary>Sammelplatz oder Zelle mit festen Fenstern: die Platzvergabe lässt sie aus.</summary>
+    private bool IsReserved(int slot) => slot == OverflowSlot || HasPins(slot);
+
+    private void Unpin(IntPtr hwnd)
+    {
+        foreach (string id in _pins.Keys.ToList())
+        {
+            _pins[id].Remove(hwnd);
+            if (_pins[id].Count == 0)
+            {
+                _pins.Remove(id);
+            }
+        }
+    }
+
+    private void ClearPins(int slot)
+    {
+        if (slot >= 0 && slot < _config.Cells.Count)
+        {
+            _pins.Remove(_config.Cells[slot].Id);
+        }
+    }
+
+    /// <summary>
+    /// Feste Fenster aufräumen: Zelle weg, Fenster geschlossen oder nicht mehr gefunden, nicht verwaltet, gesperrt oder in der Mitte.
+    /// Eine Zelle ohne feste Fenster wird danach wieder normal vergeben.
+    /// </summary>
+    private void PrunePins()
+    {
+        if (_pins.Count == 0)
+        {
+            return;
+        }
+
+        var alive = new HashSet<IntPtr>(_groups.SelectMany((g, i) => IsIgnored(i) ? Enumerable.Empty<IntPtr>() : g.Select(w => w.Hwnd)));
+        var cellIds = new HashSet<string>(_config.Cells.Select(c => c.Id));
+        foreach (string id in _pins.Keys.ToList())
+        {
+            if (!cellIds.Contains(id))
+            {
+                _pins.Remove(id);
+                continue;
+            }
+
+            _pins[id].RemoveAll(h => !Native.IsWindow(h) || !alive.Contains(h) || h == _centerHwnd || _blocked.Contains(h));
+            if (_pins[id].Count == 0)
+            {
+                _pins.Remove(id);
+            }
+        }
+    }
 
     /// <summary>Ob die App auf „nicht verwalten“ steht (ignored): Fokus-Dock fasst ihre Fenster nie an.</summary>
     private bool IsIgnored(int app) =>
@@ -972,7 +1232,26 @@ public partial class DockWindow : Window
     /// Sammelplatz: die unterste Zelle der rechten Seite (ohne rechte Zellen die letzte). -1, wenn abgeschaltet.
     /// Er bekommt nie eine eigene App, sondern nimmt alle Apps ohne Platz auf.
     /// </summary>
-    private int OverflowSlot => DockLayout.OverflowIndex(_config.Cells, _config.OverflowCorner);
+    private int OverflowSlot
+    {
+        get
+        {
+            if (!_config.OverflowCorner)
+            {
+                return -1;
+            }
+
+            // Der Sammelplatz bleibt bei seiner Zelle, auch wenn sich die Form der Zellen beim Teilen und Zusammenlegen ändert.
+            // Erst wenn es sie nicht mehr gibt, gilt wieder die unterste Zelle rechts.
+            int index = _overflowId == null ? -1 : _config.Cells.FindIndex(c => c.Id == _overflowId);
+            if (index < 0)
+            {
+                index = DockLayout.OverflowIndex(_config.Cells, true);
+                _overflowId = index >= 0 ? _config.Cells[index].Id : null;
+            }
+            return index;
+        }
+    }
 
     /// <summary>Fenster eines Platzes: beim Sammelplatz alle Apps ohne Platz, sonst die Fenster seiner App.</summary>
     private List<WindowInfo> WindowsOfSlot(int slot)
@@ -980,6 +1259,11 @@ public partial class DockWindow : Window
         if (slot == OverflowSlot)
         {
             return OverflowWindows();
+        }
+        if (HasPins(slot))
+        {
+            List<IntPtr> pinned = _pins[_config.Cells[slot].Id];
+            return _groups.SelectMany(g => g).Where(w => pinned.Contains(w.Hwnd) && w.Hwnd != _centerHwnd).OrderBy(w => w.Z).ToList();
         }
         return _slots[slot] < 0 ? new List<WindowInfo>() : SlotWindows(_slots[slot]);
     }
@@ -1002,10 +1286,9 @@ public partial class DockWindow : Window
     /// <summary>Erster normaler Platz (nicht der Sammelplatz), dessen App die Bedingung erfüllt.</summary>
     private int FindSlot(Func<int, bool> match)
     {
-        int overflow = OverflowSlot;
         for (int s = 0; s < _slots.Length; s++)
         {
-            if (s != overflow && match(_slots[s]))
+            if (!IsReserved(s) && match(_slots[s]))
             {
                 return s;
             }
@@ -1035,6 +1318,7 @@ public partial class DockWindow : Window
 
         _centerHwnd = hwnd;
         _centerApp = app;
+        Unpin(hwnd);
         Array.Fill(_slotSignature, null);
         Refresh();
         return true;
@@ -1306,6 +1590,7 @@ public partial class DockWindow : Window
             return;
         }
 
+        Unpin(hwnd);
         SnapUndo undo = CaptureUndo();
         bool overflow = kind == DropKind.Overflow;
         int displaced = overflow ? -1 : _slots[slot];
@@ -1344,6 +1629,10 @@ public partial class DockWindow : Window
     {
         AppEntry entry = _config.Apps[app];
         int old = Array.IndexOf(_slots, app);
+        if (slot != OverflowSlot)
+        {
+            ClearPins(slot);   // die Zelle bekommt eine App, die festen Fenster darin werden wieder frei
+        }
         foreach (CellEntry cell in _config.Cells.Where(c => c.App == entry.Name))
         {
             cell.App = null;
@@ -1381,6 +1670,11 @@ public partial class DockWindow : Window
         if (slot == OverflowSlot)
         {
             MoveToCenter(hwnd);
+            return;
+        }
+        if (HasPins(slot))
+        {
+            SwapFromPinned(hwnd, slot);
             return;
         }
 
@@ -1429,6 +1723,44 @@ public partial class DockWindow : Window
         Refresh();
     }
 
+    /// <summary>
+    /// Fenster aus einer Zelle mit festen Fenstern in die Mitte. Das bisherige Mitte-Fenster nimmt seinen Platz in der Zelle ein.
+    /// </summary>
+    private void SwapFromPinned(IntPtr hwnd, int slot)
+    {
+        if (hwnd == _centerHwnd || _blocked.Contains(hwnd))
+        {
+            return;
+        }
+
+        // Zuerst das neue Mitte-Fenster setzen: lässt es sich nicht verschieben, bleibt alles, wie es war
+        if (!WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center))
+        {
+            NoteIfBlocked(hwnd);
+            Refresh();
+            return;
+        }
+
+        IntPtr previous = _centerHwnd;
+        string id = _config.Cells[slot].Id;
+        NativeRect slotRect = DockLayout.SlotRects(_config)[slot];
+        Unpin(hwnd);
+        if (previous != IntPtr.Zero && Native.IsWindow(previous) && !_blocked.Contains(previous))
+        {
+            if (!_pins.TryGetValue(id, out List<IntPtr> list))
+            {
+                _pins[id] = list = new List<IntPtr>();
+            }
+            list.Add(previous);
+            WindowPlacer.PlaceInSlot(previous, slotRect, Native.HWND_TOP, front: true);
+        }
+
+        _centerHwnd = hwnd;
+        _centerApp = AppOfWindow(_groups, hwnd);
+        _slotSignature[slot] = null;
+        Refresh();
+    }
+
     /// <summary>Fensterliste eines Kachelplatzes, über dem Platz. Beim Sammelplatz mit Gruppenzeilen je App.</summary>
     private void ShowList(int slot)
     {
@@ -1455,7 +1787,7 @@ public partial class DockWindow : Window
         IntPtr front = byZ.FirstOrDefault(w => !w.Fullscreen)?.Hwnd ?? IntPtr.Zero;
         string header = overflow
             ? $"Sammelplatz · {WindowCount(windows.Count)}"
-            : $"{DockLayout.SlotLabel(_config, slot)} · {AppName(_slots[slot])} · {WindowCount(windows.Count)}";
+            : $"{DockLayout.SlotLabel(_config, slot)} · {AppName(_slots[slot] >= 0 ? _slots[slot] : AppOfWindow(_groups, windows[0].Hwnd))} · {WindowCount(windows.Count)}";
 
         _listSlot = slot;
         _list.ShowFor(items, slotRect, right ? layout.Right : layout.Left, front, header, OnListPick, OnListCenter, HideList);
