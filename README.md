@@ -37,6 +37,9 @@ Es läuft nur eine Instanz. Fokus-Dock hat kein Hauptfenster, sondern ein Symbol
 | **Vorwärts-Taste der Maus** auf eine Spalte | Vorschauen aller Fenster dieser App erscheinen über dem Platz, alle auf einen Blick (gescrollt wird nur bei sehr vielen Fenstern). Ein Klick auf eine Vorschau setzt dieses Fenster in den Platz, die Zurück-Taste auf einer Vorschau holt es in die Mitte. Die Liste schließt mit `Esc`, mit einem zweiten Druck der Vorwärts-Taste, mit einem Klick daneben oder wenn die Maus sie verlässt. |
 | `Strg+Alt+F` | Spalten ein/aus. Das Mitte-Fenster bleibt, wo es ist. |
 | **Fenster ziehen** und über einem Platz loslassen | Das Fenster rastet dort ein. Seine App bekommt diesen Platz fest (gespeichert), die bisherige App tauscht auf den alten Platz. Über der Mitte losgelassen wird es das Mitte-Fenster, über dem Sammelplatz wandert die App dorthin und bleibt dort, bis du sie wieder auf einen Platz ziehst. Größe ändern löst kein Einrasten aus. |
+| `Strg+Alt+M` | Das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt (wie die Zurück-Taste, nur per Tastatur). |
+| `Strg+Alt+A` | Übersicht aller Fenster als Liste mit Vorschauen, nach Priorität der Apps geordnet. Klick holt das Fenster in seinen Platz nach vorn (minimierte werden wiederhergestellt), die Zurück-Taste in die Mitte, Esc schließt. |
+| `Strg+Alt+L` | Zum nächsten gespeicherten Layout wechseln. |
 | `Strg+Alt+P` | Prioritätsliste: alle bekannten Apps, vorne = wichtiger. Jede Zeile zeigt Rang, ob die App läuft, und ihren Platz. Unter der Liste stehen „Platz garantiert“, „Nicht verwalten“ und „Entfernen“ für die gewählte App. ▲/▼ (auch Alt+↑/↓) und diese Einstellungen werden sofort in `config.json` gespeichert. „Plätze neu verteilen“ belegt die Plätze nach der Reihenfolge neu. |
 | `Strg+Alt+Q` | Beendet Fokus-Dock. |
 | **Shift** beim Loslassen eines gezogenen Fensters | Das Fenster wird frei abgelegt: kein Einrasten, nichts wird gespeichert. Beim Ziehen zeigt eine Vorschau, wohin das Fenster einrasten würde. |
@@ -102,6 +105,18 @@ Standardliste: Claude, die Web-App WhatsApp Web, Brave, PowerShell und Explorer.
 ## Rückfragen von Windows
 
 Die Benutzerkontensteuerung (UAC) und Anmeldedialoge fasst Fokus-Dock nie an: Ihre Fenster werden weder platziert noch als App aufgenommen. Solange eine solche Rückfrage sichtbar ist, blenden sich das Benachrichtigungsfeld und die Knöpfe aus, damit sie nichts verdecken.
+
+## Layouts
+
+Im Menü des Symbols unter „Layouts“ speicherst du das aktuelle Layout (Plätze, Benachrichtigungsfeld und Breite der Mitte) unter einem Namen, zum Beispiel „Arbeit“, „Freizeit“ oder „Fokus“. Ein Klick auf den Namen wendet es an, `Strg+Alt+L` schaltet der Reihe nach durch. Gespeichert wird in `layouts` in `config.json`.
+
+## Monitor
+
+Im Menü unter „Monitor“ wählst du, auf welchem Bildschirm Fokus-Dock die Fenster anordnet (Primärmonitor oder Nummer in der Windows-Anzeige). Gespeichert als `monitor` (0 = Primärmonitor). Das Layout gilt für diesen einen Monitor.
+
+## Feste Fenster nach einem Neustart
+
+Fenster, die beim Teilen oder Ablegen fest in einer Zelle liegen, merkt sich Fokus-Dock in `pins` in `config.json`, erkennbar an Programm und Titelanfang (der Teil vor „ - “). Nach einem Neustart oder wenn ein Fenster wieder aufgeht, kommt es in seine Zelle zurück. Jedes Fenster wird nur einmal geprüft, ein Fenster, das du danach woandershin legst, springt also nicht zurück.
 
 ## Taskleiste
 

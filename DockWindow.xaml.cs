@@ -20,6 +20,9 @@ public partial class DockWindow : Window
     internal const int ToggleHotkeyId = 1;
     internal const int ExitHotkeyId = 2;
     internal const int PriorityHotkeyId = 3;
+    internal const int CenterHotkeyId = 5;
+    internal const int OverviewHotkeyId = 6;
+    internal const int LayoutHotkeyId = 7;
     private const int ListEscHotkeyId = 4;   // Esc, solange die Fensterliste offen ist
     internal static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "config.json");
 
@@ -28,6 +31,10 @@ public partial class DockWindow : Window
     private readonly MouseHook _mouse;
     private readonly DragSnap _drag;
     private readonly ForegroundHook _foreground;
+    private bool _overview;                      // Die Fensterliste zeigt die Übersicht aller Fenster
+    private int _presetIndex = -1;               // Zuletzt gewähltes gespeichertes Layout (für das Kürzel „nächstes Layout“)
+    private bool _pinsDirty;                     // Die festen Fenster haben sich geändert: config.json beim nächsten Abgleich nachziehen
+    private readonly HashSet<IntPtr> _restoreTried = new();   // Fenster, für die schon nach einem gemerkten festen Platz gesucht wurde
     private bool _foregroundRefreshQueued;
     private readonly DispatcherTimer _dragTimer;   // läuft nur während eines Ziehens: aktualisiert die Zielvorschau
     private ZoneHighlight _highlight;              // Zielvorschau; entsteht beim ersten Ziehen
@@ -74,6 +81,7 @@ public partial class DockWindow : Window
     {
         InitializeComponent();
         _config = config;
+        Monitors.Selected = config.Monitor;
 
         int slotCount = config.Cells.Count;
         _slots = Enumerable.Repeat(-1, slotCount).ToArray();
@@ -167,6 +175,9 @@ public partial class DockWindow : Window
         AddHotkey(hwnd, ToggleHotkeyId, "Ein/Aus", _config.Hotkey);
         AddHotkey(hwnd, PriorityHotkeyId, "Prioritätsliste", _config.PriorityHotkey);
         AddHotkey(hwnd, ExitHotkeyId, "Beenden", _config.ExitHotkey);
+        AddHotkey(hwnd, CenterHotkeyId, "Fenster in die Mitte", _config.CenterHotkey);
+        AddHotkey(hwnd, OverviewHotkeyId, "Übersicht aller Fenster", _config.OverviewHotkey);
+        AddHotkey(hwnd, LayoutHotkeyId, "Nächstes Layout", _config.LayoutHotkey);
 
         try
         {
@@ -240,6 +251,9 @@ public partial class DockWindow : Window
         {
             ToggleHotkeyId => _config.Hotkey,
             ExitHotkeyId => _config.ExitHotkey,
+            CenterHotkeyId => _config.CenterHotkey,
+            OverviewHotkeyId => _config.OverviewHotkey,
+            LayoutHotkeyId => _config.LayoutHotkey,
             _ => _config.PriorityHotkey,
         };
         string text = HotkeyText(raw);
@@ -420,6 +434,7 @@ public partial class DockWindow : Window
                 Unpin(hwnd);
             }
             _pins[created.Id] = behind;
+            _pinsDirty = true;
         }
 
         HideList();
@@ -457,6 +472,284 @@ public partial class DockWindow : Window
             _foregroundRefreshQueued = false;
             Refresh();
         }));
+    }
+
+    /// <summary>Titelanfang als Erkennungsmerkmal eines Fensters: der erste Abschnitt vor " - " oder " — ", ohne Zähler wie "(2) ".</summary>
+    internal static string TitleKey(string title)
+    {
+        string text = System.Text.RegularExpressions.Regex.Replace((title ?? "").Trim(), @"^\(\d+\)\s*", "");
+        int cut = text.Length;
+        foreach (string separator in new[] { " - ", " — " })
+        {
+            int at = text.IndexOf(separator, StringComparison.Ordinal);
+            if (at > 0 && at < cut)
+            {
+                cut = at;
+            }
+        }
+        return text.Substring(0, cut).Trim();
+    }
+
+    /// <summary>
+    /// Feste Fenster aus config.json (Pins) bei neu gesehenen Fenstern wiederfinden: Programm und Titelanfang müssen passen.
+    /// Jedes Fenster wird nur einmal geprüft, damit ein Fenster, das du danach woandershin legst, nicht wieder zurückspringt.
+    /// </summary>
+    private void RestorePins()
+    {
+        _restoreTried.RemoveWhere(h => !Native.IsWindow(h));
+        if (_config.Pins.Count == 0)
+        {
+            return;
+        }
+
+        var cellIds = new HashSet<string>(_config.Cells.Select(c => c.Id));
+        List<PinEntry> wishes = _config.Pins.Where(p => cellIds.Contains(p.Cell)).ToList();
+        bool changed = false;
+        for (int i = 0; i < _groups.Length && wishes.Count > 0; i++)
+        {
+            if (IsIgnored(i))
+            {
+                continue;
+            }
+
+            foreach (WindowInfo w in _groups[i])
+            {
+                if (w.Hwnd == _centerHwnd || _blocked.Contains(w.Hwnd) || IsPinned(w.Hwnd) || !_restoreTried.Add(w.Hwnd))
+                {
+                    continue;
+                }
+
+                string key = TitleKey(w.Title);
+                PinEntry wish = wishes.FirstOrDefault(p =>
+                    string.Equals(p.Process, w.ProcessName, StringComparison.OrdinalIgnoreCase) && p.Title == key);
+                if (wish == null)
+                {
+                    continue;
+                }
+
+                wishes.Remove(wish);
+                if (!_pins.TryGetValue(wish.Cell, out List<IntPtr> list))
+                {
+                    _pins[wish.Cell] = list = new List<IntPtr>();
+                }
+                list.Add(w.Hwnd);
+                changed = true;
+            }
+        }
+
+        if (changed)
+        {
+            Array.Fill(_slotSignature, null);
+        }
+    }
+
+    /// <summary>
+    /// Die festen Fenster in config.json merken (Pins). Wünsche für Fenster, die gerade nicht offen sind, bleiben erhalten,
+    /// damit sie nach dem nächsten Start wieder in ihre Zelle finden.
+    /// </summary>
+    private void RememberPins()
+    {
+        List<WindowInfo> open = _groups.SelectMany(g => g).ToList();
+        var entries = new List<PinEntry>();
+        foreach ((string cell, List<IntPtr> windows) in _pins)
+        {
+            foreach (IntPtr hwnd in windows)
+            {
+                WindowInfo info = open.FirstOrDefault(w => w.Hwnd == hwnd);
+                if (info != null)
+                {
+                    entries.Add(new PinEntry { Cell = cell, Process = info.ProcessName, Title = TitleKey(info.Title) });
+                }
+            }
+        }
+
+        foreach (PinEntry old in _config.Pins)
+        {
+            bool stillOpen = open.Any(w => string.Equals(w.ProcessName, old.Process, StringComparison.OrdinalIgnoreCase) && TitleKey(w.Title) == old.Title);
+            bool listed = entries.Any(e => e.Cell == old.Cell && e.Process == old.Process && e.Title == old.Title);
+            if (!stillOpen && !listed)
+            {
+                entries.Add(old);
+            }
+        }
+
+        _config.Pins = entries;
+        SaveConfig(out _);
+    }
+
+    /// <summary>Kürzel: das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt (wie die Zurück-Taste).</summary>
+    private void CenterForegroundWindow()
+    {
+        if (!_enabled || _fullscreenPause)
+        {
+            return;
+        }
+
+        IntPtr hwnd = Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT);
+        for (int s = 0; s < _slots.Length; s++)
+        {
+            if (WindowsOfSlot(s).Any(w => w.Hwnd == hwnd))
+            {
+                SwapToCenter(hwnd, s);
+                return;
+            }
+        }
+        Toast.Show(hwnd == _centerHwnd ? "Das Fenster ist schon in der Mitte." : "Dieses Fenster liegt in keinem Platz.");
+    }
+
+    /// <summary>
+    /// Kürzel: Übersicht aller Fenster als Liste mit Vorschauen, nach Priorität der Apps geordnet. Klick holt das Fenster
+    /// in seinen Platz nach vorn (minimierte werden wiederhergestellt), die Zurück-Taste in die Mitte, Esc schließt.
+    /// </summary>
+    private void ShowOverview()
+    {
+        if (!_enabled || _fullscreenPause)
+        {
+            return;
+        }
+        if (_overview && _list.IsVisible)
+        {
+            HideList();
+            return;
+        }
+
+        HideList();
+        var items = new List<(WindowInfo Window, string App)>();
+        for (int i = 0; i < _groups.Length; i++)
+        {
+            if (IsIgnored(i))
+            {
+                continue;
+            }
+            foreach (WindowInfo w in _groups[i].Where(w => !_blocked.Contains(w.Hwnd)))
+            {
+                items.Add((w, AppName(i)));
+            }
+        }
+        if (items.Count == 0)
+        {
+            return;
+        }
+
+        NativeRect center = DockLayout.Compute(_config).Center;
+        double scale = Monitors.Scale;
+        int width = Math.Min(center.Right - center.Left, (int)Math.Round(640 * scale));
+        int left = center.Left + (center.Right - center.Left - width) / 2;
+        var slot = new NativeRect { Left = left, Right = left + width, Top = center.Top, Bottom = center.Top + (int)Math.Round(160 * scale) };
+        IntPtr front = Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT);
+
+        _overview = true;
+        _list.ShowFor(items, slot, center, front, $"Alle Fenster · {WindowCount(items.Count)}", OnOverviewPick, OnListCenter, HideList, showApps: true);
+        _listRect = _list.PixelRect;
+
+        IntPtr hwnd = new WindowInteropHelper(this).Handle;
+        if (_escRegistered)
+        {
+            Native.UnregisterHotKey(hwnd, ListEscHotkeyId);
+        }
+        _escRegistered = Native.RegisterHotKey(hwnd, ListEscHotkeyId, Native.MOD_NOREPEAT, Native.VK_ESCAPE);
+    }
+
+    /// <summary>Aus der Übersicht gewählt: das Fenster nach vorn holen. Der Abgleich legt es vorn in seinen Platz.</summary>
+    private void OnOverviewPick(IntPtr hwnd)
+    {
+        HideList();
+        if (Native.IsWindow(hwnd))
+        {
+            WindowPlacer.Activate(hwnd);
+        }
+        Refresh();
+    }
+
+    /// <summary>Aktuelles Layout (Plätze, Benachrichtigungsfeld, Breite der Mitte) unter einem Namen speichern.</summary>
+    internal void SaveLayoutPreset()
+    {
+        string name = PromptWindow.Ask("Layout speichern", "Name des Layouts", $"Layout {_config.Layouts.Count + 1}");
+        if (name == null)
+        {
+            return;
+        }
+
+        var preset = new LayoutPreset
+        {
+            Name = name,
+            CenterPercent = _config.CenterPercent,
+            Cells = _config.Cells.Select(c => c.Clone()).ToList(),
+            Notifications = _config.Notifications?.Clone(),
+        };
+        int at = _config.Layouts.FindIndex(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (at >= 0)
+        {
+            _config.Layouts[at] = preset;
+        }
+        else
+        {
+            _config.Layouts.Add(preset);
+        }
+
+        SaveConfig(out bool notified);
+        if (!notified)
+        {
+            Toast.Show($"Layout „{name}“ gespeichert");
+        }
+    }
+
+    internal void ApplyPreset(string name)
+    {
+        int index = _config.Layouts.FindIndex(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return;
+        }
+
+        LayoutPreset preset = _config.Layouts[index];
+        _presetIndex = index;
+        HideList();
+        _config.Notifications = preset.Notifications?.Clone();
+        _pins.Clear();
+        _pinsDirty = true;
+        ApplyLayout(preset.Cells.Select(c => c.Clone()).ToList(), preset.CenterPercent, true);
+        if (_enabled && !_fullscreenPause && _centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd) && !WindowFinder.IsFullscreen(_centerHwnd))
+        {
+            WindowPlacer.Move(_centerHwnd, DockLayout.Compute(_config).Center);
+        }
+        Toast.Show($"Layout „{preset.Name}“");
+    }
+
+    internal void DeletePreset(string name)
+    {
+        if (_config.Layouts.RemoveAll(l => string.Equals(l.Name, name, StringComparison.OrdinalIgnoreCase)) > 0)
+        {
+            _presetIndex = -1;
+            SaveConfig(out _);
+        }
+    }
+
+    /// <summary>Kürzel: das nächste gespeicherte Layout anwenden, nach dem letzten wieder das erste.</summary>
+    private void NextPreset()
+    {
+        if (_config.Layouts.Count == 0)
+        {
+            Toast.Show("Noch kein Layout gespeichert. Im Menü unter „Layouts“ speicherst du das aktuelle.");
+            return;
+        }
+
+        _presetIndex = (_presetIndex + 1) % _config.Layouts.Count;
+        ApplyPreset(_config.Layouts[_presetIndex].Name);
+    }
+
+    /// <summary>Monitor wechseln: 0 = Primärmonitor, 1 und höher = Nummer in der Windows-Anzeige. Alles wird neu angeordnet.</summary>
+    internal void SetMonitor(int index)
+    {
+        if (index == _config.Monitor)
+        {
+            return;
+        }
+
+        _config.Monitor = index;
+        Monitors.Selected = index;
+        SaveConfig(out _);
+        OnDisplayChanged();
     }
 
     private void OnClosed(object sender, EventArgs e)
@@ -510,6 +803,21 @@ public partial class DockWindow : Window
             else if (id == PriorityHotkeyId)
             {
                 OpenPriority();
+                handled = true;
+            }
+            else if (id == CenterHotkeyId)
+            {
+                CenterForegroundWindow();
+                handled = true;
+            }
+            else if (id == OverviewHotkeyId)
+            {
+                ShowOverview();
+                handled = true;
+            }
+            else if (id == LayoutHotkeyId)
+            {
+                NextPreset();
                 handled = true;
             }
             else if (id == ListEscHotkeyId)
@@ -783,6 +1091,7 @@ public partial class DockWindow : Window
         List<WindowInfo>[] groups = WindowFinder.Collect(_config.Apps);
         _groups = groups;
         PrunePins();
+        RestorePins();
 
         if (!_initialized && !_fullscreenPause)
         {
@@ -816,6 +1125,12 @@ public partial class DockWindow : Window
 
         UpdateNotificationPanel();
         UpdateSizeButtons();
+
+        if (_pinsDirty)
+        {
+            _pinsDirty = false;
+            RememberPins();
+        }
 
         // Offene Prioritätsliste: Status und Plätze nachziehen (ändert nur Texte, außer die App-Folge weicht ab)
         if (_priority != null && _priority.IsVisible)
@@ -1206,7 +1521,10 @@ public partial class DockWindow : Window
     {
         foreach (string id in _pins.Keys.ToList())
         {
-            _pins[id].Remove(hwnd);
+            if (_pins[id].Remove(hwnd))
+            {
+                _pinsDirty = true;
+            }
             if (_pins[id].Count == 0)
             {
                 _pins.Remove(id);
@@ -1216,9 +1534,9 @@ public partial class DockWindow : Window
 
     private void ClearPins(int slot)
     {
-        if (slot >= 0 && slot < _config.Cells.Count)
+        if (slot >= 0 && slot < _config.Cells.Count && _pins.Remove(_config.Cells[slot].Id))
         {
-            _pins.Remove(_config.Cells[slot].Id);
+            _pinsDirty = true;
         }
     }
 
@@ -1665,6 +1983,7 @@ public partial class DockWindow : Window
                 _pins[cellId] = pinnedHere = new List<IntPtr>();
             }
             pinnedHere.Add(hwnd);
+            _pinsDirty = true;
         }
         Array.Fill(_slotSignature, null);
         bool saved = SaveConfig(out bool notified);
@@ -1818,6 +2137,7 @@ public partial class DockWindow : Window
                 _pins[id] = list = new List<IntPtr>();
             }
             list.Add(previous);
+            _pinsDirty = true;
             WindowPlacer.PlaceInSlot(previous, slotRect, Native.HWND_TOP, front: true);
         }
 
@@ -1857,6 +2177,7 @@ public partial class DockWindow : Window
             : $"{DockLayout.SlotLabel(_config, slot)} · {AppName(_slots[slot] >= 0 ? _slots[slot] : AppOfWindow(_groups, windows[0].Hwnd))} · {WindowCount(windows.Count)}";
 
         _listSlot = slot;
+        _overview = false;
         _list.ShowFor(items, slotRect, right ? layout.Right : layout.Left, front, header, OnListPick, OnListCenter, HideList);
         _listRect = _list.PixelRect;
 
@@ -1919,6 +2240,7 @@ public partial class DockWindow : Window
     {
         _list.HideList();
         _listSlot = -1;
+        _overview = false;
         _leaveSince = null;
         if (_escRegistered)
         {
@@ -1930,7 +2252,7 @@ public partial class DockWindow : Window
     /// <summary>Mausfilter: Linksklick oder Rechtsklick irgendwo. Bei offener Liste schließt ein Klick außerhalb sie sofort.</summary>
     private void OnMouseClick(NativePoint pt)
     {
-        if (_listSlot >= 0 && !Contains(_listRect, pt))
+        if ((_listSlot >= 0 || _overview) && !Contains(_listRect, pt))
         {
             Dispatcher.BeginInvoke(new Action(HideList));
         }
@@ -1939,7 +2261,7 @@ public partial class DockWindow : Window
     /// <summary>Fensterliste ausblenden, sobald die Maus sie eine Weile verlassen hat.</summary>
     private void Poll()
     {
-        if (_listSlot < 0)
+        if (_listSlot < 0 && !_overview)
         {
             return;
         }

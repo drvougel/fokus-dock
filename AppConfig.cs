@@ -36,6 +36,24 @@ public sealed class AppConfig
     /// <summary>„−“ und „+“ oben in der Mitte jedes Vierecks: stufenweise kleiner und größer machen.</summary>
     public bool SizeButtons { get; set; } = true;
 
+    /// <summary>Monitor, auf dem Fokus-Dock die Fenster anordnet: 0 = Primärmonitor, 1 und höher = Nummer in der Windows-Anzeige.</summary>
+    public int Monitor { get; set; }
+
+    /// <summary>Das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt.</summary>
+    public string CenterHotkey { get; set; } = "Ctrl+Alt+M";
+
+    /// <summary>Übersicht aller Fenster.</summary>
+    public string OverviewHotkey { get; set; } = "Ctrl+Alt+A";
+
+    /// <summary>Zum nächsten gespeicherten Layout wechseln.</summary>
+    public string LayoutHotkey { get; set; } = "Ctrl+Alt+L";
+
+    /// <summary>Gespeicherte Layouts (Plätze, Benachrichtigungsfeld und Breite der Mitte), umschaltbar im Menü oder per Kürzel.</summary>
+    public List<LayoutPreset> Layouts { get; set; } = new();
+
+    /// <summary>Fenster, die fest in einer geteilten Zelle liegen. Fokus-Dock erkennt sie nach einem Neustart an Programm und Titelanfang.</summary>
+    public List<PinEntry> Pins { get; set; } = new();
+
     /// <summary>
     /// Benachrichtigungsfeld: ein Bereich neben den Plätzen, in dem die Windows-Benachrichtigungen schlicht angezeigt werden.
     /// Er liegt außerhalb von cells, dort stehen also keine Fenster. Fehlt der Eintrag, gibt es kein Feld.
@@ -90,6 +108,16 @@ public sealed class AppConfig
     /// <summary>Ein ungültiger Bereich fürs Benachrichtigungsfeld wird verworfen, mit Hinweis.</summary>
     private void NormalizeNotifications()
     {
+        Layouts ??= new List<LayoutPreset>();
+        Layouts.RemoveAll(l => l == null || string.IsNullOrWhiteSpace(l.Name) || l.Cells == null || l.Cells.Count == 0);
+        Pins ??= new List<PinEntry>();
+        Pins.RemoveAll(p => p == null || string.IsNullOrEmpty(p.Cell) || string.IsNullOrEmpty(p.Process));
+        if (Monitor < 0)
+        {
+            Warnings.Add("monitor darf nicht negativ sein, es gilt der Primärmonitor.");
+            Monitor = 0;
+        }
+
         NotificationAreaEntry n = Notifications;
         if (n == null)
         {
@@ -319,11 +347,30 @@ public sealed class AppConfig
 /// <summary>Bereich des Benachrichtigungsfelds. Anteile wie bei einem Platz: sie beziehen sich auf den Seitenbereich.</summary>
 public sealed class NotificationAreaEntry
 {
+    public NotificationAreaEntry Clone() => new() { Side = Side, X = X, Y = Y, W = W, H = H };
+
     public string Side { get; set; } = "left";
     public double X { get; set; }
     public double Y { get; set; }
     public double W { get; set; } = 1;
     public double H { get; set; } = 1;
+}
+
+/// <summary>Ein gespeichertes Layout.</summary>
+public sealed class LayoutPreset
+{
+    public string Name { get; set; } = "";
+    public int CenterPercent { get; set; } = 50;
+    public List<CellEntry> Cells { get; set; } = new();
+    public NotificationAreaEntry Notifications { get; set; }
+}
+
+/// <summary>Ein Fenster, das fest in einer Zelle liegt, erkennbar an Programm und Titelanfang.</summary>
+public sealed class PinEntry
+{
+    public string Cell { get; set; } = "";
+    public string Process { get; set; } = "";
+    public string Title { get; set; } = "";
 }
 
 /// <summary>Ein Platz außen. Anteile beziehen sich auf den Seitenbereich (links oder rechts).</summary>
@@ -335,6 +382,8 @@ public sealed class CellEntry
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Corner { get; set; }
+
+    public CellEntry Clone() => new() { Id = Id, Side = Side, X = X, Y = Y, W = W, H = H, App = App, Corner = Corner };
 
     public string Id { get; set; } = "";
     public string Side { get; set; } = "left";

@@ -31,6 +31,8 @@ internal sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _priorityItem;
     private readonly ToolStripMenuItem _exitItem;
     private readonly ToolStripMenuItem _autostartItem;
+    private readonly ToolStripMenuItem _layoutsItem;
+    private readonly ToolStripMenuItem _monitorItem;
     private readonly NotifyIcon _notify;
     private bool _disposed;
 
@@ -62,6 +64,9 @@ internal sealed class TrayIcon : IDisposable
         var layoutItem = new ToolStripMenuItem("Layout…");
         layoutItem.Click += (_, _) => Run(_dock.OpenLayout);
 
+        _layoutsItem = new ToolStripMenuItem("Layouts");
+        _monitorItem = new ToolStripMenuItem("Monitor");
+
         var helpItem = new ToolStripMenuItem("Bedienung…");
         helpItem.Click += (_, _) => Run(_dock.OpenHelp);
 
@@ -79,7 +84,7 @@ internal sealed class TrayIcon : IDisposable
 
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _enabledItem, _priorityItem, layoutItem, helpItem,
+            _enabledItem, _priorityItem, layoutItem, _layoutsItem, _monitorItem, helpItem,
             new ToolStripSeparator(),
             configItem, restartItem, _autostartItem,
             new ToolStripSeparator(),
@@ -131,6 +136,60 @@ internal sealed class TrayIcon : IDisposable
 
         _autostartItem.Enabled = AutostartCommand() != null;
         _autostartItem.Checked = IsAutostart();
+        RebuildLayouts();
+        RebuildMonitors();
+    }
+
+    /// <summary>Untermenü der gespeicherten Layouts: anwenden, aktuelles speichern, löschen.</summary>
+    private void RebuildLayouts()
+    {
+        ToolStripMenuItem Item(string text, Action action)
+        {
+            var item = new ToolStripMenuItem(text) { ForeColor = Color.White };
+            item.Click += (_, _) => Run(action);
+            return item;
+        }
+
+        _layoutsItem.DropDown.Renderer = _menu.Renderer;
+        _layoutsItem.DropDownItems.Clear();
+        List<string> names = _config.Layouts.Select(l => l.Name).ToList();
+        foreach (string name in names)
+        {
+            string captured = name;
+            _layoutsItem.DropDownItems.Add(Item(captured, () => _dock.ApplyPreset(captured)));
+        }
+        if (names.Count > 0)
+        {
+            _layoutsItem.DropDownItems.Add(new ToolStripSeparator());
+        }
+
+        ToolStripMenuItem save = Item("Aktuelles Layout speichern…", _dock.SaveLayoutPreset);
+        _layoutsItem.DropDownItems.Add(save);
+        foreach (string name in names)
+        {
+            string captured = name;
+            _layoutsItem.DropDownItems.Add(Item("Löschen: " + captured, () => _dock.DeletePreset(captured)));
+        }
+        _layoutsItem.ShortcutKeyDisplayString = _dock.HotkeyLabel(DockWindow.LayoutHotkeyId);
+    }
+
+    /// <summary>Untermenü der Monitore: Primärmonitor oder ein bestimmter Bildschirm.</summary>
+    private void RebuildMonitors()
+    {
+        _monitorItem.DropDown.Renderer = _menu.Renderer;
+        _monitorItem.DropDownItems.Clear();
+        string[] screens = Monitors.Describe();
+        for (int i = 0; i <= screens.Length; i++)
+        {
+            int index = i;
+            var item = new ToolStripMenuItem(i == 0 ? "Primärmonitor" : screens[i - 1])
+            {
+                ForeColor = Color.White,
+                Checked = _config.Monitor == i,
+            };
+            item.Click += (_, _) => Run(() => _dock.SetMonitor(index));
+            _monitorItem.DropDownItems.Add(item);
+        }
     }
 
     /// <summary>config.json im zugeordneten Programm öffnen, sonst im Editor. Fehlt die Datei noch, wird sie zuerst geschrieben.</summary>

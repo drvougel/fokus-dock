@@ -56,7 +56,7 @@ public sealed class WindowListWindow : ThumbnailWindow
     /// <param name="onCenter">Zurück-Taste auf einer Kachel.</param>
     /// <param name="onClose">Vorwärts-Taste auf der Liste.</param>
     internal void ShowFor(IReadOnlyList<(WindowInfo Window, string App)> items, NativeRect slot, NativeRect side, IntPtr front,
-        string header, Action<IntPtr> onPick, Action<IntPtr> onCenter, Action onClose)
+        string header, Action<IntPtr> onPick, Action<IntPtr> onCenter, Action onClose, bool showApps = false)
     {
         ReleaseThumbnails();
         _stack.Children.Clear();
@@ -72,7 +72,7 @@ public sealed class WindowListWindow : ThumbnailWindow
             }
         }
         // App-Name und Gruppenzeilen nur im Sammelplatz, der mehrere Apps mischt (erkennbar an der Kopfzeile)
-        bool showApp = header.StartsWith("Sammelplatz", StringComparison.Ordinal);
+        bool showApp = showApps || header.StartsWith("Sammelplatz", StringComparison.Ordinal);
         if (!showApp)
         {
             groups = 0;
