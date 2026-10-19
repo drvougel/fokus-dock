@@ -37,6 +37,38 @@ internal static class WindowFinder
     /// </summary>
     private static readonly string[] StrictBrowsers = { "vivaldi.exe" };
 
+    /// <summary>
+    /// Prozesse der Rückfragen von Windows: Benutzerkontensteuerung (UAC) und Anmeldedialoge. Ihre Fenster werden nie platziert
+    /// und nie als App aufgenommen, und solange eines sichtbar ist, blendet Fokus-Dock seine Einblendungen aus.
+    /// </summary>
+    private static readonly HashSet<string> SecurityPrompts = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "consent.exe", "CredentialUIBroker.exe",
+    };
+
+    /// <summary>Ob gerade eine Rückfrage von Windows (zum Beispiel die Benutzerkontensteuerung) sichtbar ist.</summary>
+    public static bool SecurityPromptVisible()
+    {
+        bool found = false;
+        Native.EnumWindows((hwnd, _) =>
+        {
+            if (!Native.IsWindowVisible(hwnd) || Native.GetWindowTextLength(hwnd) == 0)
+            {
+                return true;
+            }
+
+            Native.GetWindowThreadProcessId(hwnd, out uint pid);
+            ProcInfo proc = pid == 0 ? null : ReadProcess(pid);
+            if (proc != null && SecurityPrompts.Contains(proc.Name))
+            {
+                found = true;
+                return false;
+            }
+            return true;
+        }, IntPtr.Zero);
+        return found;
+    }
+
     private static bool HasBrowserSuffix(string title) =>
         BrowserSuffixes.Any(s => title.EndsWith(s, StringComparison.OrdinalIgnoreCase));
 
@@ -218,8 +250,9 @@ internal static class WindowFinder
         }
 
         ProcInfo proc = ReadProcess(pid);
-        if (proc == null)
+        if (proc == null || SecurityPrompts.Contains(proc.Name))
         {
+            // Rückfragen von Windows (Benutzerkontensteuerung, Anmeldedialoge) fasst Fokus-Dock nie an
             return null;
         }
 

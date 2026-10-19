@@ -61,6 +61,7 @@ public partial class DockWindow : Window
     private readonly Dictionary<string, List<IntPtr>> _pins = new();   // Zellen-Id → Fenster, die fest in dieser Zelle liegen (nach dem Teilen)
     private bool _initialized;
     private bool _enabled = true;            // Spalten ein/aus (Hotkey)
+    private bool _promptVisible;             // Eine Rückfrage von Windows (UAC) ist sichtbar: Fokus-Dock blendet seine Einblendungen aus
     private bool _fullscreenPause;           // Vollbild läuft (Spiel, Video, Präsentation): Fokus-Dock fasst keine Fenster an
     private DateTime? _leaveSince;
     private DateTime? _startCenterUntil;     // Start-App lief beim Start noch nicht: bis dahin kommt sie beim Auftauchen in die Mitte
@@ -256,7 +257,7 @@ public partial class DockWindow : Window
     private void UpdateNotificationPanel()
     {
         NativeRect? rect = DockLayout.NotificationRect(_config);
-        if (rect == null || !_enabled || _fullscreenPause)
+        if (rect == null || !_enabled || _fullscreenPause || _promptVisible)
         {
             _notifyPanel?.Hide();
             return;
@@ -290,7 +291,7 @@ public partial class DockWindow : Window
     private void UpdateSizeButtons()
     {
         var targets = new List<(NativeRect Rect, Action<SizeAction> Act)>();
-        if (_config.SizeButtons && _enabled && !_fullscreenPause)
+        if (_config.SizeButtons && _enabled && !_fullscreenPause && !_promptVisible)
         {
             NativeRect[] rects = DockLayout.SlotRects(_config);
             for (int i = 0; i < rects.Length; i++)
@@ -777,6 +778,7 @@ public partial class DockWindow : Window
         // Geschlossene Fenster verlassen die Liste der nicht verschiebbaren; ein neues Fenster bekommt wieder einen Versuch
         _blocked.RemoveWhere(h => !Native.IsWindow(h));
 
+        _promptVisible = WindowFinder.SecurityPromptVisible();
         AddDiscoveredApps();
         List<WindowInfo>[] groups = WindowFinder.Collect(_config.Apps);
         _groups = groups;

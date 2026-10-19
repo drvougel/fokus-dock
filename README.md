@@ -99,6 +99,10 @@ Standardliste: Claude, die Web-App WhatsApp Web, Brave, PowerShell und Explorer.
 - Die Spalten reservieren keinen Platz im Arbeitsbereich. Maximierte Fenster werden am linken und rechten Rand überlagert.
 - Fenster, die man verschiebt oder in der Größe ändert, werden nicht sofort zurückgesetzt. Die Plätze werden neu eingerichtet, wenn sich die Fensterliste der App ändert.
 
+## Rückfragen von Windows
+
+Die Benutzerkontensteuerung (UAC) und Anmeldedialoge fasst Fokus-Dock nie an: Ihre Fenster werden weder platziert noch als App aufgenommen. Solange eine solche Rückfrage sichtbar ist, blenden sich das Benachrichtigungsfeld und die Knöpfe aus, damit sie nichts verdecken.
+
 ## Taskleiste
 
 Klickst du eine App in der Windows-Taskleiste an, gleicht Fokus-Dock sofort ab: Das Fenster liegt in seinem Platz (oder im Sammelplatz) ganz vorn und ist sichtbar, von dort kannst du es weiter einsortieren. Dazu nimmt Fokus-Dock den Fenstern, die es in Plätze oder in die Mitte setzt, „immer im Vordergrund“ weg. Sonst würde ein solches Fenster alle anderen im selben Platz mit nach oben ziehen, und eine angeklickte App bliebe dahinter verdeckt. Fenster, die Fokus-Dock nicht verwaltet (Administrator, „nicht verwalten“), bleiben unangetastet.
