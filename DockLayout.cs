@@ -28,6 +28,31 @@ internal sealed class DockLayout
     }
 
     /// <summary>
+    /// Mitte oder eine ihrer Hälften: part 0 = links/oben, 1 = rechts/unten. Ohne Teilung (oder bei part &lt; 0) die ganze Mitte.
+    /// </summary>
+    public static NativeRect CenterPart(AppConfig config, int part)
+    {
+        NativeRect c = Compute(config).Center;
+        if (part < 0 || (config.CenterSplit != 1 && config.CenterSplit != 2))
+        {
+            return c;
+        }
+
+        if (config.CenterSplit == 1)
+        {
+            int mid = (c.Left + c.Right) / 2;
+            return part == 0
+                ? new NativeRect { Left = c.Left, Top = c.Top, Right = mid, Bottom = c.Bottom }
+                : new NativeRect { Left = mid, Top = c.Top, Right = c.Right, Bottom = c.Bottom };
+        }
+
+        int middle = (c.Top + c.Bottom) / 2;
+        return part == 0
+            ? new NativeRect { Left = c.Left, Top = c.Top, Right = c.Right, Bottom = middle }
+            : new NativeRect { Left = c.Left, Top = middle, Right = c.Right, Bottom = c.Bottom };
+    }
+
+    /// <summary>
     /// Kurzname eines Platzes: „L“ oder „R“ plus der Rang der Zelle innerhalb ihrer Seite (oben nach unten, bei gleicher Höhe links nach rechts), ab 1.
     /// </summary>
     public static string SlotLabel(AppConfig config, int index) => SlotLabel(config.Cells, index);

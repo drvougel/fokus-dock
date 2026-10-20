@@ -32,6 +32,7 @@ internal sealed class TrayIcon : IDisposable
     private readonly ToolStripMenuItem _exitItem;
     private readonly ToolStripMenuItem _autostartItem;
     private readonly ToolStripMenuItem _layoutsItem;
+    private readonly ToolStripMenuItem _splitItem;
     private readonly ToolStripMenuItem _monitorItem;
     private readonly NotifyIcon _notify;
     private bool _disposed;
@@ -61,6 +62,9 @@ internal sealed class TrayIcon : IDisposable
         _priorityItem = new ToolStripMenuItem("Prioritätsliste…");
         _priorityItem.Click += (_, _) => Run(_dock.OpenPriority);
 
+        _splitItem = new ToolStripMenuItem("Mitte teilen");
+        _splitItem.Click += (_, _) => Run(_dock.CycleCenterSplit);
+
         var layoutItem = new ToolStripMenuItem("Layout…");
         layoutItem.Click += (_, _) => Run(_dock.OpenLayout);
 
@@ -84,7 +88,7 @@ internal sealed class TrayIcon : IDisposable
 
         _menu.Items.AddRange(new ToolStripItem[]
         {
-            _enabledItem, _priorityItem, layoutItem, _layoutsItem, _monitorItem, helpItem,
+            _enabledItem, _priorityItem, layoutItem, _layoutsItem, _splitItem, _monitorItem, helpItem,
             new ToolStripSeparator(),
             configItem, restartItem, _autostartItem,
             new ToolStripSeparator(),

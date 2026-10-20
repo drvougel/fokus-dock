@@ -48,6 +48,12 @@ public sealed class AppConfig
     /// <summary>Zum nächsten gespeicherten Layout wechseln.</summary>
     public string LayoutHotkey { get; set; } = "Ctrl+Alt+L";
 
+    /// <summary>Mitte teilen: reihum aus, nebeneinander, übereinander.</summary>
+    public string SplitHotkey { get; set; } = "Ctrl+Alt+H";
+
+    /// <summary>Teilung der Mitte: 0 = ein Fenster, 1 = zwei nebeneinander, 2 = zwei übereinander.</summary>
+    public int CenterSplit { get; set; }
+
     /// <summary>Gespeicherte Layouts (Plätze, Benachrichtigungsfeld und Breite der Mitte), umschaltbar im Menü oder per Kürzel.</summary>
     public List<LayoutPreset> Layouts { get; set; } = new();
 

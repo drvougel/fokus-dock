@@ -157,7 +157,7 @@ internal sealed class NotificationPanel : OverlayWindow
         }
     }
 
-    private static NotificationItem Convert(UserNotification n)
+    internal static NotificationItem Convert(UserNotification n)
     {
         try
         {

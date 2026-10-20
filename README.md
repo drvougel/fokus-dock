@@ -40,6 +40,7 @@ Es läuft nur eine Instanz. Fokus-Dock hat kein Hauptfenster, sondern ein Symbol
 | `Strg+Alt+X` | Das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt (wie die Zurück-Taste, nur per Tastatur). |
 | `Strg+Alt+A` | Übersicht aller Fenster als Liste mit Vorschauen, nach Priorität der Apps geordnet. Klick holt das Fenster in seinen Platz nach vorn (minimierte werden wiederhergestellt), die Zurück-Taste in die Mitte, Esc schließt. |
 | `Strg+Alt+L` | Zum nächsten gespeicherten Layout wechseln. |
+| `Strg+Alt+H` | Mitte teilen, reihum: ein Fenster, zwei nebeneinander, zwei übereinander (auch im Menü des Symbols). Ein Fenster, das in die Mitte kommt, nimmt die erste Hälfte; das bisherige rückt in die freie zweite. Auf eine Hälfte gezogen, landet das Fenster genau dort. In `config.json`: `centerSplit` (0/1/2) und `splitHotkey`. |
 | `Strg+Alt+P` | Prioritätsliste: alle bekannten Apps, vorne = wichtiger. Jede Zeile zeigt Rang, ob die App läuft, und ihren Platz. Unter der Liste stehen „Platz garantiert“, „Nicht verwalten“ und „Entfernen“ für die gewählte App. ▲/▼ (auch Alt+↑/↓) und diese Einstellungen werden sofort in `config.json` gespeichert. „Plätze neu verteilen“ belegt die Plätze nach der Reihenfolge neu. |
 | `Strg+Alt+Q` | Beendet Fokus-Dock. |
 | **Shift** beim Loslassen eines gezogenen Fensters | Das Fenster wird frei abgelegt: kein Einrasten, nichts wird gespeichert. Beim Ziehen zeigt eine Vorschau, wohin das Fenster einrasten würde. |

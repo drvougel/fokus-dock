@@ -23,6 +23,7 @@ public partial class DockWindow : Window
     internal const int CenterHotkeyId = 5;
     internal const int OverviewHotkeyId = 6;
     internal const int LayoutHotkeyId = 7;
+    internal const int SplitHotkeyId = 8;
     private const int ListEscHotkeyId = 4;   // Esc, solange die Fensterliste offen ist
     internal static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "config.json");
 
@@ -59,6 +60,8 @@ public partial class DockWindow : Window
     private List<WindowInfo>[] _groups;      // letzter Fensterstand je App
     private IntPtr _centerHwnd;              // echtes Fenster in der Mitte
     private int _centerApp = -1;             // App des Mitte-Fensters, -1 = keines
+    private IntPtr _center2Hwnd;             // zweites Fenster in der geteilten Mitte (rechts bzw. unten)
+    private int _center2App = -1;
     private int _listSlot = -1;              // Kachelplatz, dessen Fensterliste offen ist
     private NativeRect _listRect;            // Pixelrechteck der offenen Fensterliste (Klick-daneben-Test)
     private bool _escRegistered;             // Esc-Kürzel für die Liste ist belegt
@@ -178,6 +181,7 @@ public partial class DockWindow : Window
         AddHotkey(hwnd, CenterHotkeyId, "Fenster in die Mitte", _config.CenterHotkey);
         AddHotkey(hwnd, OverviewHotkeyId, "Übersicht aller Fenster", _config.OverviewHotkey);
         AddHotkey(hwnd, LayoutHotkeyId, "Nächstes Layout", _config.LayoutHotkey);
+        AddHotkey(hwnd, SplitHotkeyId, "Mitte teilen", _config.SplitHotkey);
 
         try
         {
@@ -253,6 +257,7 @@ public partial class DockWindow : Window
             CenterHotkeyId => _config.CenterHotkey,
             OverviewHotkeyId => _config.OverviewHotkey,
             LayoutHotkeyId => _config.LayoutHotkey,
+            SplitHotkeyId => _config.SplitHotkey,
             _ => _config.PriorityHotkey,
         };
         string text = HotkeyText(raw);
@@ -299,7 +304,7 @@ public partial class DockWindow : Window
 
     /// <summary>
     /// Knöpfe oben in der Mitte jedes Vierecks (Plätze und Benachrichtigungsfeld): teilen oder zusammenlegen.
-    /// Die Mitte hat keine, und die Gesamtgröße der Spalten ändert sich nie. Die Knöpfe folgen den Vierecken bei jedem Abgleich.
+    /// Die Mitte hat eigene (Teilung des Mitte-Fensters), und die Gesamtgröße der Spalten ändert sich nie. Die Knöpfe folgen den Vierecken bei jedem Abgleich.
     /// </summary>
     private void UpdateSizeButtons()
     {
@@ -319,6 +324,14 @@ public partial class DockWindow : Window
                 NotificationAreaEntry n = _config.Notifications;
                 targets.Add((area.Value, action => ChangeTile(n, action)));
             }
+
+            // Mitte: teilen in links/rechts oder oben/unten, Plus macht sie wieder zu einem Fenster
+            targets.Add((DockLayout.Compute(_config).Center, action => SetCenterSplit(action switch
+            {
+                SizeAction.SplitSideBySide => 1,
+                SizeAction.SplitStacked => 2,
+                _ => 0,
+            })));
         }
 
         try
@@ -514,7 +527,7 @@ public partial class DockWindow : Window
 
             foreach (WindowInfo w in _groups[i])
             {
-                if (w.Hwnd == _centerHwnd || _blocked.Contains(w.Hwnd) || IsPinned(w.Hwnd) || !_restoreTried.Add(w.Hwnd))
+                if (IsCenterWindow(w.Hwnd) || _blocked.Contains(w.Hwnd) || IsPinned(w.Hwnd) || !_restoreTried.Add(w.Hwnd))
                 {
                     continue;
                 }
@@ -594,7 +607,7 @@ public partial class DockWindow : Window
                 return;
             }
         }
-        Toast.Show(hwnd == _centerHwnd ? "Das Fenster ist schon in der Mitte." : "Dieses Fenster liegt in keinem Platz.");
+        Toast.Show(IsCenterWindow(hwnd) ? "Das Fenster ist schon in der Mitte." : "Dieses Fenster liegt in keinem Platz.");
     }
 
     /// <summary>
@@ -709,9 +722,9 @@ public partial class DockWindow : Window
         _pins.Clear();
         _pinsDirty = true;
         ApplyLayout(preset.Cells.Select(c => c.Clone()).ToList(), preset.CenterPercent, true);
-        if (_enabled && !_fullscreenPause && _centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd) && !WindowFinder.IsFullscreen(_centerHwnd))
+        if (_enabled && !_fullscreenPause)
         {
-            WindowPlacer.Move(_centerHwnd, DockLayout.Compute(_config).Center);
+            MoveCenterWindows();
         }
         RefreshLayoutEditor();
         Toast.Show($"Layout „{preset.Name}“");
@@ -819,6 +832,21 @@ public partial class DockWindow : Window
                 {
                     ToggleEnabled();
                 }
+                else if (p[1] == "splitcenter")
+                {
+                    CycleCenterSplit();
+                }
+                return "ok";
+            case "notifs":
+                return NotificationFeed.Json();
+            case "notif-dismiss" when p.Length >= 2:
+                if (uint.TryParse(p[1], out uint dismissId))
+                {
+                    NotificationFeed.Dismiss(dismissId);
+                }
+                return "ok";
+            case "notif-clear":
+                NotificationFeed.ClearAll();
                 return "ok";
             case "ping":
                 return "ok";
@@ -833,7 +861,7 @@ public partial class DockWindow : Window
 
                 int app = AppOfWindow(_groups, w.Hwnd);
                 int slotOfApp = app >= 0 ? Array.IndexOf(_slots, app) : -1;
-                return $"app={app}({AppName(app)}) platz={slotOfApp} gesperrt={_blocked.Contains(w.Hwnd)} fest={IsPinned(w.Hwnd)} mitte={w.Hwnd == _centerHwnd} " +
+                return $"app={app}({AppName(app)}) platz={slotOfApp} gesperrt={_blocked.Contains(w.Hwnd)} fest={IsPinned(w.Hwnd)} mitte={IsCenterWindow(w.Hwnd)} " +
                        $"ignoriert={IsIgnored(app)} fenster_im_platz={(app >= 0 ? SlotWindows(app).Count : -1)} vollbild={w.Fullscreen} " +
                        $"slots=[{string.Join(",", _slots)}]";
             }
@@ -866,7 +894,7 @@ public partial class DockWindow : Window
             return;
         }
 
-        NativeRect zone = kind == DropKind.Center ? DockLayout.Compute(_config).Center : DockLayout.SlotRects(_config)[slot];
+        NativeRect zone = kind == DropKind.Center ? DockLayout.CenterPart(_config, slot) : DockLayout.SlotRects(_config)[slot];
         string title = kind switch
         {
             DropKind.Center => "Mitte",
@@ -976,6 +1004,11 @@ public partial class DockWindow : Window
                 NextPreset();
                 handled = true;
             }
+            else if (id == SplitHotkeyId)
+            {
+                CycleCenterSplit();
+                handled = true;
+            }
             else if (id == ListEscHotkeyId)
             {
                 HideList();
@@ -1007,10 +1040,9 @@ public partial class DockWindow : Window
         // wechselt, löst diese Meldung ebenfalls aus; der Zustand wird deshalb jetzt frisch gelesen.
         _fullscreenPause = QueryFullscreenPause();
         Toast.Paused = _fullscreenPause;
-        if (_enabled && !_fullscreenPause && _centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd)
-            && !WindowFinder.IsFullscreen(_centerHwnd))
+        if (_enabled && !_fullscreenPause)
         {
-            WindowPlacer.Move(_centerHwnd, DockLayout.Compute(_config).Center);
+            MoveCenterWindows();
         }
         Refresh();
     }
@@ -1205,6 +1237,7 @@ public partial class DockWindow : Window
     {
         string[] slotNames = _slots.Select(i => i < 0 ? null : _config.Apps[i].Name).ToArray();
         string centerName = _centerApp < 0 ? null : _config.Apps[_centerApp].Name;
+        string center2Name = _center2App < 0 ? null : _config.Apps[_center2App].Name;
 
         _config.Apps = ordered.ToList();
         for (int s = 0; s < _slots.Length; s++)
@@ -1212,6 +1245,7 @@ public partial class DockWindow : Window
             _slots[s] = IndexOfApp(slotNames[s]);
         }
         _centerApp = IndexOfApp(centerName);
+        _center2App = IndexOfApp(center2Name);
 
         if (save)
         {
@@ -1264,6 +1298,26 @@ public partial class DockWindow : Window
             if (_centerApp < 0)
             {
                 _centerHwnd = IntPtr.Zero;
+            }
+        }
+        if (_center2Hwnd != IntPtr.Zero)
+        {
+            _center2App = _config.CenterSplit == 0 ? -1 : AppOfWindow(groups, _center2Hwnd);
+            if (_center2App < 0)
+            {
+                _center2Hwnd = IntPtr.Zero;
+            }
+        }
+        if (_centerHwnd == IntPtr.Zero && _center2Hwnd != IntPtr.Zero)
+        {
+            // Erste Hälfte leer geworden: das zweite Fenster rückt nach
+            _centerHwnd = _center2Hwnd;
+            _centerApp = _center2App;
+            _center2Hwnd = IntPtr.Zero;
+            _center2App = -1;
+            if (_enabled && !_fullscreenPause)
+            {
+                MoveCenterWindows();
             }
         }
 
@@ -1335,7 +1389,7 @@ public partial class DockWindow : Window
         }
 
         // Erst platzieren: lässt sich das Fenster nicht verschieben, ändert sich am Zustand nichts
-        if (!WindowPlacer.Place(window.Hwnd, DockLayout.Compute(_config).Center))
+        if (!WindowPlacer.Place(window.Hwnd, DockLayout.CenterPart(_config, 0)))
         {
             NoteIfBlocked(window.Hwnd);
             return false;
@@ -1378,7 +1432,7 @@ public partial class DockWindow : Window
     }
 
     /// <summary>Ob eine App einen Platz außen haben kann: immer, außer sie steht in der Mitte ohne weitere Fenster.</summary>
-    private bool CanHaveSlot(int app) => app != _centerApp || SlotWindows(app).Count > 0;
+    private bool CanHaveSlot(int app) => (app != _centerApp && app != _center2App) || SlotWindows(app).Count > 0;
 
     /// <summary>
     /// Plätze belegen: zuerst die festen Apps ihrer Zelle, danach die übrigen Apps in Prioritätsreihenfolge
@@ -1452,10 +1506,9 @@ public partial class DockWindow : Window
         AssignSlots(onlyRunning: false);
 
         // Breitere oder schmalere Mitte: das Mitte-Fenster sofort auf die neue Größe setzen
-        if (_enabled && !_fullscreenPause && _centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd)
-            && !WindowFinder.IsFullscreen(_centerHwnd))
+        if (_enabled && !_fullscreenPause)
         {
-            WindowPlacer.Move(_centerHwnd, DockLayout.Compute(_config).Center);
+            MoveCenterWindows();
         }
 
         bool notified = false;
@@ -1676,7 +1729,7 @@ public partial class DockWindow : Window
 
     /// <summary>Fenster einer App, die außen stehen können: alle außer dem Mitte-Fenster. Nicht verwaltete Apps haben keine.</summary>
     private List<WindowInfo> SlotWindows(int app) =>
-        IsIgnored(app) ? new List<WindowInfo>() : _groups[app].Where(w => w.Hwnd != _centerHwnd && !_blocked.Contains(w.Hwnd) && !IsPinned(w.Hwnd)).ToList();
+        IsIgnored(app) ? new List<WindowInfo>() : _groups[app].Where(w => !IsCenterWindow(w.Hwnd) && !_blocked.Contains(w.Hwnd) && !IsPinned(w.Hwnd)).ToList();
 
     /// <summary>Ob das Fenster fest in einer Zelle liegt (beim Teilen aus dem Hintergrund einer Zelle dorthin gelegt).</summary>
     private bool IsPinned(IntPtr hwnd) => _pins.Values.Any(list => list.Contains(hwnd));
@@ -1732,7 +1785,7 @@ public partial class DockWindow : Window
                 continue;
             }
 
-            _pins[id].RemoveAll(h => !Native.IsWindow(h) || !alive.Contains(h) || h == _centerHwnd || _blocked.Contains(h));
+            _pins[id].RemoveAll(h => !Native.IsWindow(h) || !alive.Contains(h) || IsCenterWindow(h) || _blocked.Contains(h));
             if (_pins[id].Count == 0)
             {
                 _pins.Remove(id);
@@ -1794,7 +1847,7 @@ public partial class DockWindow : Window
             return new List<WindowInfo>();
         }
         List<IntPtr> pinned = _pins[_config.Cells[slot].Id];
-        return _groups.SelectMany(g => g).Where(w => pinned.Contains(w.Hwnd) && w.Hwnd != _centerHwnd).OrderBy(w => w.Z).ToList();
+        return _groups.SelectMany(g => g).Where(w => pinned.Contains(w.Hwnd) && !IsCenterWindow(w.Hwnd)).OrderBy(w => w.Z).ToList();
     }
 
     /// <summary>Fenster eines Platzes: beim Sammelplatz alle Apps ohne Platz, sonst die Fenster seiner App.</summary>
@@ -1841,28 +1894,139 @@ public partial class DockWindow : Window
         return -1;
     }
 
+    /// <summary>Ob das Fenster in der Mitte liegt (in einer der beiden Hälften).</summary>
+    private bool IsCenterWindow(IntPtr hwnd) => hwnd != IntPtr.Zero && (hwnd == _centerHwnd || hwnd == _center2Hwnd);
+
+    /// <summary>Mitte-Fenster auf ihre Hälfte setzen bzw. auf die ganze Mitte (nach Größen-, Layout- oder Monitorwechsel).</summary>
+    private void MoveCenterWindows()
+    {
+        if (_centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd) && !WindowFinder.IsFullscreen(_centerHwnd))
+        {
+            WindowPlacer.Move(_centerHwnd, DockLayout.CenterPart(_config, 0));
+        }
+        if (_center2Hwnd != IntPtr.Zero && Native.IsWindow(_center2Hwnd) && !WindowFinder.IsFullscreen(_center2Hwnd))
+        {
+            WindowPlacer.Move(_center2Hwnd, DockLayout.CenterPart(_config, 1));
+        }
+    }
+
+    /// <summary>Mitte reihum: ein Fenster, zwei nebeneinander, zwei übereinander.</summary>
+    internal void CycleCenterSplit() => SetCenterSplit((_config.CenterSplit + 1) % 3);
+
+    internal void SetCenterSplit(int mode)
+    {
+        mode = Math.Clamp(mode, 0, 2);
+        if (mode == _config.CenterSplit)
+        {
+            return;
+        }
+
+        _config.CenterSplit = mode;
+        if (mode == 0)
+        {
+            // Das zweite Fenster verlässt die Mitte: der nächste Abgleich legt es auf den Platz seiner App oder in den Sammelplatz
+            _center2Hwnd = IntPtr.Zero;
+            _center2App = -1;
+        }
+        HideList();
+        Array.Fill(_slotSignature, null);
+        SaveConfig(out bool notified);
+        if (_enabled && !_fullscreenPause)
+        {
+            MoveCenterWindows();
+        }
+        Refresh();
+        if (!notified)
+        {
+            Toast.Show(mode switch
+            {
+                1 => "Mitte geteilt: nebeneinander",
+                2 => "Mitte geteilt: übereinander",
+                _ => "Mitte ungeteilt",
+            });
+        }
+    }
+
+    /// <summary>Hälfte der geteilten Mitte unter dem Zeiger: 0 oder 1, -1 ohne Teilung.</summary>
+    private int CenterPartAt(NativePoint pt)
+    {
+        NativeRect c = DockLayout.Compute(_config).Center;
+        return _config.CenterSplit switch
+        {
+            1 => pt.X >= (c.Left + c.Right) / 2 ? 1 : 0,
+            2 => pt.Y >= (c.Top + c.Bottom) / 2 ? 1 : 0,
+            _ => -1,
+        };
+    }
+
+    /// <summary>
+    /// Fenster, das schon in der Mitte liegt, auf eine Hälfte ziehen: gleiche Hälfte = zurücksetzen, andere Hälfte = die beiden tauschen
+    /// (oder, ist die andere Hälfte leer, dorthin verschieben).
+    /// </summary>
+    private void MoveWithinCenter(IntPtr hwnd, int part)
+    {
+        if (_config.CenterSplit == 0 || part < 0)
+        {
+            WindowPlacer.Place(hwnd, DockLayout.CenterPart(_config, -1));
+            return;
+        }
+
+        int current = hwnd == _center2Hwnd ? 1 : 0;
+        if (part != current)
+        {
+            (_centerHwnd, _center2Hwnd) = (_center2Hwnd, _centerHwnd);
+            (_centerApp, _center2App) = (_center2App, _centerApp);
+            if (_centerHwnd == IntPtr.Zero)
+            {
+                // Hälfte 0 war leer: das verbliebene Fenster rückt nach
+                (_centerHwnd, _center2Hwnd) = (_center2Hwnd, IntPtr.Zero);
+                (_centerApp, _center2App) = (_center2App, -1);
+            }
+        }
+        MoveCenterWindows();
+        Refresh();
+    }
+
     /// <summary>
     /// Fenster aus dem Sammelplatz in die Mitte. Das bisherige Mitte-Fenster muss nicht umgesetzt werden:
     /// der nächste Abgleich legt es auf den Platz seiner App oder, ohne Platz, in den Sammelplatz.
     /// </summary>
-    private bool MoveToCenter(IntPtr hwnd)
+    private bool MoveToCenter(IntPtr hwnd, int part = 0)
     {
         int app = AppOfWindow(_groups, hwnd);
-        if (app < 0 || hwnd == _centerHwnd || IsIgnored(app) || _blocked.Contains(hwnd))
+        if (app < 0 || IsCenterWindow(hwnd) || IsIgnored(app) || _blocked.Contains(hwnd))
         {
             return false;
         }
 
+        bool second = _config.CenterSplit != 0 && part == 1;
+
         // Erst platzieren: lässt sich das Fenster nicht verschieben, bleibt alles, wie es war
-        if (!WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center))
+        if (!WindowPlacer.Place(hwnd, DockLayout.CenterPart(_config, second ? 1 : 0)))
         {
             NoteIfBlocked(hwnd);
             Refresh();
             return false;
         }
 
-        _centerHwnd = hwnd;
-        _centerApp = app;
+        if (second)
+        {
+            // Das bisherige zweite Fenster verlässt die Mitte (der nächste Abgleich räumt es weg)
+            _center2Hwnd = hwnd;
+            _center2App = app;
+        }
+        else
+        {
+            // Geteilte Mitte mit freier zweiter Hälfte: das bisherige Mitte-Fenster rückt dorthin
+            if (_config.CenterSplit != 0 && _center2Hwnd == IntPtr.Zero && _centerHwnd != IntPtr.Zero && Native.IsWindow(_centerHwnd))
+            {
+                _center2Hwnd = _centerHwnd;
+                _center2App = _centerApp;
+                WindowPlacer.Place(_center2Hwnd, DockLayout.CenterPart(_config, 1));
+            }
+            _centerHwnd = hwnd;
+            _centerApp = app;
+        }
         Unpin(hwnd);
         Array.Fill(_slotSignature, null);
         Refresh();
@@ -1931,7 +2095,7 @@ public partial class DockWindow : Window
                 // Das frühere Mitte-Fenster kommt zurück in die Mitte; das eingerastete Fenster räumt der nächste Abgleich weg
                 _centerHwnd = undo.CenterHwnd;
                 _centerApp = undo.CenterApp;
-                WindowPlacer.Place(_centerHwnd, DockLayout.Compute(_config).Center);
+                WindowPlacer.Place(_centerHwnd, DockLayout.CenterPart(_config, 0));
             }
             else
             {
@@ -1959,7 +2123,7 @@ public partial class DockWindow : Window
     {
         if (Contains(DockLayout.Compute(_config).Center, pt))
         {
-            return (DropKind.Center, -1);
+            return (DropKind.Center, CenterPartAt(pt));   // bei geteilter Mitte die Hälfte (0/1), sonst -1
         }
 
         int slot = Array.FindIndex(DockLayout.SlotRects(_config), r => Contains(r, pt));
@@ -2037,7 +2201,7 @@ public partial class DockWindow : Window
             return;
         }
 
-        NativeRect zone = kind == DropKind.Center ? DockLayout.Compute(_config).Center : DockLayout.SlotRects(_config)[slot];
+        NativeRect zone = kind == DropKind.Center ? DockLayout.CenterPart(_config, slot) : DockLayout.SlotRects(_config)[slot];
         _highlight ??= new ZoneHighlight();
         (string title, string detail) = DropTexts(kind, slot, free);
         _highlight.ShowZone(zone, title, detail, free);
@@ -2111,14 +2275,14 @@ public partial class DockWindow : Window
 
         if (kind == DropKind.Center)
         {
-            if (hwnd == _centerHwnd)
+            if (IsCenterWindow(hwnd))
             {
-                WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center);
+                MoveWithinCenter(hwnd, slot);
                 return;
             }
 
             SnapUndo toCenter = CaptureUndo();
-            if (MoveToCenter(hwnd))
+            if (MoveToCenter(hwnd, slot))
             {
                 Toast.Show($"{AppName(app)} → Mitte", "Rückgängig", () => UndoSnap(toCenter));
             }
@@ -2143,6 +2307,11 @@ public partial class DockWindow : Window
         {
             _centerHwnd = IntPtr.Zero;
             _centerApp = -1;
+        }
+        else if (hwnd == _center2Hwnd)
+        {
+            _center2Hwnd = IntPtr.Zero;
+            _center2App = -1;
         }
         MoveAppToSlot(app, slot);
         if (overflow && slot != OverflowSlot)
@@ -2235,14 +2404,14 @@ public partial class DockWindow : Window
         }
 
         int app = _slots[slot];
-        if (app < 0 || hwnd == _centerHwnd || _blocked.Contains(hwnd))
+        if (app < 0 || IsCenterWindow(hwnd) || _blocked.Contains(hwnd))
         {
             return;
         }
 
         // Zuerst das neue Mitte-Fenster setzen: lässt es sich nicht verschieben (Administrator),
         // bleiben Plätze und bisheriges Mitte-Fenster unverändert.
-        if (!WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center))
+        if (!WindowPlacer.Place(hwnd, DockLayout.CenterPart(_config, 0)))
         {
             NoteIfBlocked(hwnd);
             Refresh();
@@ -2256,7 +2425,18 @@ public partial class DockWindow : Window
         // Hat die App noch weitere (verschiebbare) Fenster, behält sie ihren Platz außen.
         bool keepsSlot = _groups[app].Any(w => w.Hwnd != hwnd && !_blocked.Contains(w.Hwnd));
         _slotSignature[slot] = null;
-        if (keepsSlot)
+        if (_config.CenterSplit != 0 && _center2Hwnd == IntPtr.Zero && previousWindow != IntPtr.Zero && Native.IsWindow(previousWindow))
+        {
+            // Geteilte Mitte mit freier zweiter Hälfte: das bisherige Mitte-Fenster rückt dorthin, der Platz wird frei
+            WindowPlacer.Place(previousWindow, DockLayout.CenterPart(_config, 1));
+            _center2Hwnd = previousWindow;
+            _center2App = previousApp;
+            if (!keepsSlot)
+            {
+                _slots[slot] = -1;
+            }
+        }
+        else if (keepsSlot)
         {
             // Das bisherige Mitte-Fenster liegt hinter dem neuen; seine App wartet auf eine Lücke
             if (previousWindow != IntPtr.Zero)
@@ -2284,13 +2464,13 @@ public partial class DockWindow : Window
     /// </summary>
     private void SwapFromPinned(IntPtr hwnd, int slot)
     {
-        if (hwnd == _centerHwnd || _blocked.Contains(hwnd))
+        if (IsCenterWindow(hwnd) || _blocked.Contains(hwnd))
         {
             return;
         }
 
         // Zuerst das neue Mitte-Fenster setzen: lässt es sich nicht verschieben, bleibt alles, wie es war
-        if (!WindowPlacer.Place(hwnd, DockLayout.Compute(_config).Center))
+        if (!WindowPlacer.Place(hwnd, DockLayout.CenterPart(_config, 0)))
         {
             NoteIfBlocked(hwnd);
             Refresh();
