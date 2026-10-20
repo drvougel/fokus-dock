@@ -33,6 +33,7 @@ public sealed class LayoutWindow : Window
     private readonly Button _splitV = MakeButton("Links/rechts teilen");
     private readonly Button _merge = MakeButton("Zusammenführen");
     private readonly Button _clear = MakeButton("Platz leeren");
+    private readonly Button _corner = MakeButton("Sammelplatz an/aus");
 
     private List<CellEntry> _cells = new();
     private string _selected;
@@ -141,6 +142,7 @@ public sealed class LayoutWindow : Window
         _splitV.Click += (_, _) => Split(horizontal: false);
         _merge.Click += (_, _) => Merge();
         _clear.Click += (_, _) => ClearSelected();
+        _corner.Click += (_, _) => ToggleCorner();
         var reset = MakeButton("Raster zurücksetzen");
         reset.Click += (_, _) => ResetToDefault();
         var edit = new WrapPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -148,6 +150,7 @@ public sealed class LayoutWindow : Window
         edit.Children.Add(_splitV);
         edit.Children.Add(_merge);
         edit.Children.Add(_clear);
+        edit.Children.Add(_corner);
         edit.Children.Add(reset);
 
         // Fußleiste: Status links, Übernehmen und Schließen rechts
@@ -279,7 +282,25 @@ public sealed class LayoutWindow : Window
     private static List<CellEntry> Copy(IEnumerable<CellEntry> cells) =>
         cells.Select(c => new CellEntry { Id = c.Id, Side = c.Side, X = c.X, Y = c.Y, W = c.W, H = c.H, App = c.App, Corner = c.Corner }).ToList();
 
-    private bool IsOverflow(CellEntry cell) => _cells.IndexOf(cell) == DockLayout.OverflowIndex(_cells, _overflowEnabled);
+    /// <summary>
+    /// Ob die Zelle ein Sammelplatz ist. Es kann mehrere geben (jede Zelle mit corner). Ist keine markiert, gilt wie im Programm
+    /// die unterste Zelle rechts.
+    /// </summary>
+    private bool IsOverflow(CellEntry cell)
+    {
+        if (!_overflowEnabled)
+        {
+            return false;
+        }
+        if (_cells.Any(c => c.Corner))
+        {
+            return cell.Corner;
+        }
+        return _cells.IndexOf(cell) == DockLayout.OverflowIndex(_cells, true);
+    }
+
+    /// <summary>Benachrichtigungsfeld (nur zur Ansicht): steht neben den Plätzen und wird hier nicht bearbeitet.</summary>
+    public NotificationAreaEntry NotificationArea { get; set; }
 
     // ---- Ungespeichert, Schließen -------------------------------------------------------------
 
@@ -414,8 +435,16 @@ public sealed class LayoutWindow : Window
         List<CellEntry> fresh = AppConfig.DefaultCells(rows).Where(c => c.Side == side).ToList();
         // Der Sammelplatz darf keine feste App haben: diese Zelle auslassen
         List<CellEntry> all = fresh.Concat(_cells.Where(c => c.Side != side)).ToList();
-        int overflow = DockLayout.OverflowIndex(all, _overflowEnabled);
-        CellEntry overflowCell = overflow >= 0 ? all[overflow] : null;
+        CellEntry overflowCell = null;
+        if (_overflowEnabled && !_cells.Any(c => c.Side != side && c.Corner))
+        {
+            int overflow = DockLayout.OverflowIndex(all, true);
+            overflowCell = overflow >= 0 ? all[overflow] : null;
+            if (overflowCell != null)
+            {
+                overflowCell.Corner = true;
+            }
+        }
         int next = 0;
         foreach (CellEntry cell in fresh)
         {
@@ -441,10 +470,17 @@ public sealed class LayoutWindow : Window
     {
         _canvas.Children.Clear();
         double sideWidth = CanvasWidth * (100 - _centerPercent) / 200.0;
-        int overflow = DockLayout.OverflowIndex(_cells, _overflowEnabled);
 
         // Mitte: zeigt das Mitte-Fenster, nicht belegbar
         AddLabel(sideWidth, 0, CanvasWidth - 2 * sideWidth, _canvasHeight, "Mitte (Fenster)");
+
+        // Benachrichtigungsfeld: steht neben den Plätzen, hier nur zur Ansicht
+        if (NotificationArea != null)
+        {
+            NotificationAreaEntry n = NotificationArea;
+            double nLeft = (n.Side == "right" ? CanvasWidth - sideWidth : 0) + n.X * sideWidth;
+            AddLabel(nLeft, n.Y * _canvasHeight, n.W * sideWidth, n.H * _canvasHeight, "Benachrichtigungen");
+        }
 
         for (int i = 0; i < _cells.Count; i++)
         {
@@ -457,7 +493,7 @@ public sealed class LayoutWindow : Window
 
             string id = c.Id;
             bool selected = id == _selected;
-            bool isOverflow = i == overflow;
+            bool isOverflow = IsOverflow(c);
             Brush normalBackground = selected ? Theme.Selected : Theme.Card;
             Brush normalBorder = selected ? Theme.Accent : Theme.Line;
 
@@ -575,6 +611,8 @@ public sealed class LayoutWindow : Window
         SetState(_splitV, cell != null, "Erst einen Platz anklicken.");
         SetState(_merge, cell != null && FindMergePartner(cell) != null,
             cell == null ? "Erst einen Platz anklicken." : "Dieser Platz hat keinen Nachbarn gleicher Größe zum Zusammenführen.");
+        SetState(_corner, cell != null && _overflowEnabled,
+            cell == null ? "Erst einen Platz anklicken." : "Der Sammelplatz ist in der config.json ausgeschaltet (overflowCorner).");
         SetState(_clear, cell != null && cell.App != null,
             cell == null ? "Erst einen Platz anklicken." : "Dieser Platz hat keine feste App.");
     }
@@ -619,6 +657,36 @@ public sealed class LayoutWindow : Window
             c.App = null;
         }
         target.App = app;
+        MarkDirty();
+        Draw();
+    }
+
+    /// <summary>Den gewählten Platz zum Sammelplatz machen oder wieder zum normalen Platz. Ein Sammelplatz hat keine feste App.</summary>
+    private void ToggleCorner()
+    {
+        CellEntry cell = _cells.FirstOrDefault(c => c.Id == _selected);
+        if (cell == null || !_overflowEnabled)
+        {
+            return;
+        }
+
+        bool wasOverflow = IsOverflow(cell);
+        if (!_cells.Any(c => c.Corner))
+        {
+            // Bisher galt die unterste Zelle rechts: die Markierung wird jetzt ausdrücklich gesetzt, damit nichts springt
+            int standard = DockLayout.OverflowIndex(_cells, true);
+            if (standard >= 0)
+            {
+                _cells[standard].Corner = true;
+            }
+        }
+
+        cell.Corner = !wasOverflow;
+        if (cell.Corner)
+        {
+            cell.App = null;
+        }
+        _status.Text = cell.Corner ? "Dieser Platz sammelt jetzt Fenster ohne Platz." : "Dieser Platz ist wieder ein normaler Platz.";
         MarkDirty();
         Draw();
     }
@@ -705,6 +773,11 @@ public sealed class LayoutWindow : Window
         cell.W = x1 - x0;
         cell.H = y1 - y0;
         cell.App ??= other.App;
+        cell.Corner |= other.Corner;
+        if (cell.Corner)
+        {
+            cell.App = null;   // ein Sammelplatz hat keine feste App
+        }
 
         _cells.Remove(other);
         MarkDirty();

@@ -440,6 +440,7 @@ public partial class DockWindow : Window
         HideList();
         SaveConfig(out _);
         Refresh();
+        RefreshLayoutEditor();
 
         // Hat das geklickte Viereck den Sammelplatz aufgenommen, kommen alle Fenster ohne Platz zu seinen dazu.
         // Sein bisher vorderstes Fenster holen wir nach vorn, damit es wirklich das geklickte Viereck ist, das größer wird.
@@ -713,6 +714,7 @@ public partial class DockWindow : Window
         {
             WindowPlacer.Move(_centerHwnd, DockLayout.Compute(_config).Center);
         }
+        RefreshLayoutEditor();
         Toast.Show($"Layout „{preset.Name}“");
     }
 
@@ -1329,7 +1331,21 @@ public partial class DockWindow : Window
             _layout.BringToFront();
             return;
         }
+        _layout.NotificationArea = _config.Notifications;
         _layout.Open(_config.Cells, _config.Apps.Select(a => a.Name), _config.CenterPercent, _config.TilesPerSide, _config.OverflowCorner);
+    }
+
+    /// <summary>
+    /// Ist der Layout-Editor offen, wenn sich die Plätze anderswo ändern (Teilen, Zusammenlegen, Layout wechseln), zeigt er
+    /// sonst den alten Stand, und „Übernehmen“ würde die Änderung wieder rückgängig machen. Deshalb wird er neu geladen.
+    /// </summary>
+    private void RefreshLayoutEditor()
+    {
+        if (_layout != null && _layout.IsVisible)
+        {
+            _layout.NotificationArea = _config.Notifications;
+            _layout.Open(_config.Cells, _config.Apps.Select(a => a.Name), _config.CenterPercent, _config.TilesPerSide, _config.OverflowCorner);
+        }
     }
 
     /// <summary>
