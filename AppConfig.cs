@@ -40,7 +40,7 @@ public sealed class AppConfig
     public int Monitor { get; set; }
 
     /// <summary>Das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt.</summary>
-    public string CenterHotkey { get; set; } = "Ctrl+Alt+M";
+    public string CenterHotkey { get; set; } = "Ctrl+Alt+X";
 
     /// <summary>Übersicht aller Fenster.</summary>
     public string OverviewHotkey { get; set; } = "Ctrl+Alt+A";

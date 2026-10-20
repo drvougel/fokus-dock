@@ -155,8 +155,7 @@ public partial class DockWindow : Window
         }
         _config.Warnings.Clear();
 
-        MessageBox.Show("config.json wurde beim Laden angepasst:\n" + string.Join("\n", lines),
-            "Fokus-Dock", MessageBoxButton.OK, MessageBoxImage.Warning);
+        NoticeWindow.Show("Fokus-Dock", "config.json wurde beim Laden angepasst:\n" + string.Join("\n", lines));
     }
 
     private void OnSourceInitialized(object sender, EventArgs e)
@@ -171,6 +170,7 @@ public partial class DockWindow : Window
         _mouse.Install();
         _drag.Install();
         _foreground.Install();
+        _bridge = new LauncherBridge(Dispatcher, OnLauncherCommand);
 
         AddHotkey(hwnd, ToggleHotkeyId, "Ein/Aus", _config.Hotkey);
         AddHotkey(hwnd, PriorityHotkeyId, "Prioritätsliste", _config.PriorityHotkey);
@@ -233,10 +233,9 @@ public partial class DockWindow : Window
         string lines = string.Join("\n", _hotkeyErrors.Select(h => "• " + h));
         _hotkeyErrors.Clear();
 
-        MessageBox.Show("Diese Tastenkürzel sind nicht verfügbar:\n" + lines +
+        NoticeWindow.Show("Fokus-Dock", "Diese Tastenkürzel sind nicht verfügbar:\n" + lines +
             "\n\nDie Funktionen erreichst du über das Fokus-Dock-Symbol im Infobereich. " +
-            "Ändern kannst du die Kürzel in config.json („hotkey“, „priorityHotkey“, „exitHotkey“).",
-            "Fokus-Dock", MessageBoxButton.OK, MessageBoxImage.Warning);
+            "Ändern kannst du die Kürzel in config.json („hotkey“, „priorityHotkey“, „exitHotkey“, „centerHotkey“, „overviewHotkey“, „layoutHotkey“).");
     }
 
     /// <summary>Kürzel aus der config.json in der Schreibweise der Oberfläche: „Ctrl“ heißt dort „Strg“, egal wie es geschrieben ist.</summary>
@@ -754,6 +753,160 @@ public partial class DockWindow : Window
         OnDisplayChanged();
     }
 
+    // ---- Launcher: Programme aus seiner Leiste auf einen Platz ziehen ---------------------------------
+
+    /// <summary>Ein Programm, das der Launcher gerade einordnen will, aber noch kein Fenster hat: das erste neue Fenster wird eingeordnet.</summary>
+    private sealed record PendingPlace(string Process, string TitlePrefix, NativePoint Point, string Name, DateTime Expires);
+
+    private readonly List<PendingPlace> _pendingPlaces = new();
+    private LauncherBridge _bridge;
+    private (DropKind Kind, int Slot) _launcherShown = (DropKind.None, -1);
+
+    /// <summary>
+    /// Befehle des Launchers (siehe LauncherBridge). hover: Zielvorschau unter dem Mauszeiger, hover-end: Vorschau weg,
+    /// place: Programm einordnen (läuft es schon, wird sein vorderstes Fenster gesetzt, sonst meldet die Antwort „launch“
+    /// und das erste neue Fenster wird eingeordnet), cmd: Übersicht, nächstes Layout oder Ein/Aus.
+    /// </summary>
+    private string OnLauncherCommand(string line)
+    {
+        string[] p = line.Split('|');
+        switch (p[0])
+        {
+            case "hover" when p.Length >= 3:
+                if (_enabled && !_fullscreenPause)
+                {
+                    ShowLauncherDrop(new NativePoint { X = int.Parse(p[1]), Y = int.Parse(p[2]) }, p.Length > 3 ? p[3] : "");
+                }
+                return "ok";
+            case "hover-end":
+                EndLauncherDrop();
+                return "ok";
+            case "place" when p.Length >= 6:
+            {
+                EndLauncherDrop();
+                if (!_enabled || _fullscreenPause)
+                {
+                    return "none";
+                }
+
+                var point = new NativePoint { X = int.Parse(p[3]), Y = int.Parse(p[4]) };
+                if (ZoneAt(point).Kind == DropKind.None)
+                {
+                    return "none";
+                }
+
+                WindowInfo existing = FindLauncherWindow(p[1], p[2]);
+                if (existing != null)
+                {
+                    IntPtr hwnd = existing.Hwnd;
+                    Dispatcher.BeginInvoke(new Action(() => SnapWindow(hwnd, point)));
+                    return "placed";
+                }
+
+                _pendingPlaces.Add(new PendingPlace(p[1], p[2], point, p[5], DateTime.UtcNow.AddSeconds(25)));
+                return "launch";
+            }
+            case "cmd" when p.Length >= 2:
+                if (p[1] == "overview")
+                {
+                    ShowOverview();
+                }
+                else if (p[1] == "nextlayout")
+                {
+                    NextPreset();
+                }
+                else if (p[1] == "toggle")
+                {
+                    ToggleEnabled();
+                }
+                return "ok";
+            case "ping":
+                return "ok";
+            case "debug" when p.Length >= 2:
+            {
+                // Diagnose für die Fehlersuche: wie sieht Fokus-Dock ein Fenster dieses Programms?
+                WindowInfo w = FindLauncherWindow(p[1], p.Length > 2 ? p[2] : "");
+                if (w == null)
+                {
+                    return "kein Fenster gefunden";
+                }
+
+                int app = AppOfWindow(_groups, w.Hwnd);
+                int slotOfApp = app >= 0 ? Array.IndexOf(_slots, app) : -1;
+                return $"app={app}({AppName(app)}) platz={slotOfApp} gesperrt={_blocked.Contains(w.Hwnd)} fest={IsPinned(w.Hwnd)} mitte={w.Hwnd == _centerHwnd} " +
+                       $"ignoriert={IsIgnored(app)} fenster_im_platz={(app >= 0 ? SlotWindows(app).Count : -1)} vollbild={w.Fullscreen} " +
+                       $"slots=[{string.Join(",", _slots)}]";
+            }
+        }
+        return "unknown";
+    }
+
+    /// <summary>Vorderstes Fenster eines Programms (Prozessname, optional Titelanfang), noch nicht im Vollbild und nicht gesperrt.</summary>
+    private WindowInfo FindLauncherWindow(string process, string titlePrefix) =>
+        _groups.SelectMany(g => g)
+            .Where(w => !w.Fullscreen && !_blocked.Contains(w.Hwnd)
+                && string.Equals(w.ProcessName, process, StringComparison.OrdinalIgnoreCase)
+                && (string.IsNullOrEmpty(titlePrefix) || w.Title.StartsWith(titlePrefix, StringComparison.OrdinalIgnoreCase)))
+            .OrderBy(w => w.Z)
+            .FirstOrDefault();
+
+    /// <summary>Zielvorschau für ein Programm aus dem Launcher: dieselbe Zone wie beim Ablegen eines Fensters.</summary>
+    private void ShowLauncherDrop(NativePoint point, string name)
+    {
+        (DropKind kind, int slot) = ZoneAt(point);
+        if ((kind, slot) == _launcherShown)
+        {
+            return;
+        }
+
+        _launcherShown = (kind, slot);
+        if (kind == DropKind.None)
+        {
+            _highlight?.HideZone();
+            return;
+        }
+
+        NativeRect zone = kind == DropKind.Center ? DockLayout.Compute(_config).Center : DockLayout.SlotRects(_config)[slot];
+        string title = kind switch
+        {
+            DropKind.Center => "Mitte",
+            DropKind.Overflow => "Sammelplatz",
+            _ => $"Platz {DockLayout.SlotLabel(_config, slot)}",
+        };
+        _highlight ??= new ZoneHighlight();
+        _highlight.ShowZone(zone, title, string.IsNullOrWhiteSpace(name) ? "wird hier eingeordnet" : $"{name} kommt hierher", false);
+    }
+
+    private void EndLauncherDrop()
+    {
+        _launcherShown = (DropKind.None, -1);
+        _highlight?.HideZone();
+    }
+
+    /// <summary>Wartende Einordnungen: sobald das Fenster eines gerade gestarteten Programms da ist, wird es eingeordnet.</summary>
+    private void ProcessPendingPlaces()
+    {
+        if (_pendingPlaces.Count == 0)
+        {
+            return;
+        }
+
+        _pendingPlaces.RemoveAll(p => p.Expires < DateTime.UtcNow);
+        foreach (PendingPlace pending in _pendingPlaces.ToList())
+        {
+            WindowInfo window = FindLauncherWindow(pending.Process, pending.TitlePrefix);
+            if (window == null)
+            {
+                continue;
+            }
+
+            _pendingPlaces.Remove(pending);
+            IntPtr hwnd = window.Hwnd;
+            NativePoint point = pending.Point;
+            Dispatcher.BeginInvoke(new Action(() => SnapWindow(hwnd, point)));
+        }
+    }
+
     private void OnClosed(object sender, EventArgs e)
     {
         try
@@ -770,6 +923,7 @@ public partial class DockWindow : Window
             _mouse.Dispose();
             _drag.Dispose();
             _foreground.Dispose();
+            _bridge?.Dispose();
             _dragTimer.Stop();
             _highlight?.Close();
             HideList();
@@ -1094,6 +1248,7 @@ public partial class DockWindow : Window
         _groups = groups;
         PrunePins();
         RestorePins();
+        ProcessPendingPlaces();
 
         if (!_initialized && !_fullscreenPause)
         {
