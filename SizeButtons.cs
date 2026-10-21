@@ -250,7 +250,7 @@ internal sealed class SizeButtons : OverlayWindow
     }
 
     /// <summary>Oben in der Mitte des Vierecks platzieren. Zu schmale Vierecke bekommen keine Knöpfe.</summary>
-    public void PlaceAtTop(NativeRect rect)
+    public void PlaceAtTop(NativeRect rect, double extraTopDip = 0)
     {
         double scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
         int width = (int)Math.Round(WidthDip * scale);
@@ -262,7 +262,7 @@ internal sealed class SizeButtons : OverlayWindow
         }
 
         int left = rect.Left + (rect.Right - rect.Left - width) / 2;
-        int top = rect.Top + (int)Math.Round(TopOffsetDip * scale);
+        int top = rect.Top + (int)Math.Round((TopOffsetDip + extraTopDip) * scale);
         PlacePixels(new NativeRect { Left = left, Top = top, Right = left + width, Bottom = top + height });
     }
 }

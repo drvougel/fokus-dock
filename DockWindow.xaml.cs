@@ -60,6 +60,7 @@ public partial class DockWindow : Window
     private List<WindowInfo>[] _groups;      // letzter Fensterstand je App
     private IntPtr _centerHwnd;              // echtes Fenster in der Mitte
     private int _centerApp = -1;             // App des Mitte-Fensters, -1 = keines
+    private bool _overlayHidden;             // Launcher-Seitenleiste offen: Knoepfe ausblenden, damit sie nicht darueber liegen
     private IntPtr _center2Hwnd;             // zweites Fenster in der geteilten Mitte (rechts bzw. unten)
     private int _center2App = -1;
     private int _listSlot = -1;              // Kachelplatz, dessen Fensterliste offen ist
@@ -308,30 +309,31 @@ public partial class DockWindow : Window
     /// </summary>
     private void UpdateSizeButtons()
     {
-        var targets = new List<(NativeRect Rect, Action<SizeAction> Act)>();
-        if (_config.SizeButtons && _enabled && !_fullscreenPause && !_promptVisible)
+        var targets = new List<(NativeRect Rect, Action<SizeAction> Act, double Offset)>();
+        if (_config.SizeButtons && _enabled && !_fullscreenPause && !_promptVisible && !_overlayHidden)
         {
             NativeRect[] rects = DockLayout.SlotRects(_config);
             for (int i = 0; i < rects.Length; i++)
             {
                 CellEntry cell = _config.Cells[i];
-                targets.Add((rects[i], action => ChangeTile(cell, action)));
+                targets.Add((rects[i], action => ChangeTile(cell, action), 0));
             }
 
             NativeRect? area = DockLayout.NotificationRect(_config);
             if (area != null)
             {
                 NotificationAreaEntry n = _config.Notifications;
-                targets.Add((area.Value, action => ChangeTile(n, action)));
+                targets.Add((area.Value, action => ChangeTile(n, action), 0));
             }
 
             // Mitte: teilen in links/rechts oder oben/unten, Plus macht sie wieder zu einem Fenster
+            // Tiefer als die Launcher-Leiste (ca. 100 dip), die oben in der Mitte ausfaehrt und sonst verdeckt wuerde
             targets.Add((DockLayout.Compute(_config).Center, action => SetCenterSplit(action switch
             {
                 SizeAction.SplitSideBySide => 1,
                 SizeAction.SplitStacked => 2,
                 _ => 0,
-            })));
+            }), 110));
         }
 
         try
@@ -345,7 +347,7 @@ public partial class DockWindow : Window
                 if (i < targets.Count)
                 {
                     _sizeButtons[i].Act = targets[i].Act;
-                    _sizeButtons[i].PlaceAtTop(targets[i].Rect);
+                    _sizeButtons[i].PlaceAtTop(targets[i].Rect, targets[i].Offset);
                 }
                 else
                 {
@@ -836,6 +838,10 @@ public partial class DockWindow : Window
                 {
                     CycleCenterSplit();
                 }
+                return "ok";
+            case "overlay" when p.Length >= 2:
+                _overlayHidden = p[1] == "off";
+                UpdateSizeButtons();
                 return "ok";
             case "notifs":
                 return NotificationFeed.Json();
