@@ -24,6 +24,9 @@ public partial class DockWindow : Window
     internal const int OverviewHotkeyId = 6;
     internal const int LayoutHotkeyId = 7;
     internal const int SplitHotkeyId = 8;
+    internal const int OpacityHotkeyId = 9;
+    internal const int GlassHotkeyId = 10;
+    internal const int GlassAllHotkeyId = 11;
     private const int ListEscHotkeyId = 4;   // Esc, solange die Fensterliste offen ist
     internal static string ConfigPath => Path.Combine(AppContext.BaseDirectory, "config.json");
 
@@ -60,6 +63,7 @@ public partial class DockWindow : Window
     private List<WindowInfo>[] _groups;      // letzter Fensterstand je App
     private IntPtr _centerHwnd;              // echtes Fenster in der Mitte
     private int _centerApp = -1;             // App des Mitte-Fensters, -1 = keines
+    private IntPtr _lastManaged;             // zuletzt im Vordergrund gewesenes Fenster einer verwalteten App (der Launcher steht beim Klick im Vordergrund)
     private bool _overlayHidden;             // Launcher-Seitenleiste offen: Knoepfe ausblenden, damit sie nicht darueber liegen
     private IntPtr _center2Hwnd;             // zweites Fenster in der geteilten Mitte (rechts bzw. unten)
     private int _center2App = -1;
@@ -93,6 +97,12 @@ public partial class DockWindow : Window
         _groups = Enumerable.Range(0, config.Apps.Count).Select(_ => new List<WindowInfo>()).ToArray();
 
         _mouse = new MouseHook(OnSlotButton, OnMouseClick);
+        WindowGlass.WindowPercent = Math.Clamp(_config.GlassWindowPercent, 40, 100);
+        WindowGlass.BackdropTint = (byte)Math.Clamp(_config.GlassTint, 0, 255);
+        WindowGlass.BlurRadius = Math.Clamp(_config.GlassBlurRadius, 0, 40);
+        WindowGlass.UseWallpaper = _config.GlassWallpaper;
+        WindowGlass.CaptureScale = Math.Clamp(_config.GlassCaptureScale, 20, 100) / 100.0;
+        WindowGlass.CaptureIntervalMs = Math.Clamp(_config.GlassCaptureIntervalMs, 200, 5000);
         _drag = new DragSnap(OnDragStart, OnDragEnd, OnWindowMoved);
         _foreground = new ForegroundHook(OnForegroundChanged);
         _dragTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(40) };
@@ -183,6 +193,9 @@ public partial class DockWindow : Window
         AddHotkey(hwnd, OverviewHotkeyId, "Übersicht aller Fenster", _config.OverviewHotkey);
         AddHotkey(hwnd, LayoutHotkeyId, "Nächstes Layout", _config.LayoutHotkey);
         AddHotkey(hwnd, SplitHotkeyId, "Mitte teilen", _config.SplitHotkey);
+        AddHotkey(hwnd, OpacityHotkeyId, "Fenster durchsichtiger", _config.OpacityHotkey);
+        AddHotkey(hwnd, GlassHotkeyId, "Fenster-Glas", _config.GlassHotkey);
+        AddHotkey(hwnd, GlassAllHotkeyId, "Glas für alle Fenster", _config.GlassAllHotkey);
 
         try
         {
@@ -259,6 +272,9 @@ public partial class DockWindow : Window
             OverviewHotkeyId => _config.OverviewHotkey,
             LayoutHotkeyId => _config.LayoutHotkey,
             SplitHotkeyId => _config.SplitHotkey,
+            OpacityHotkeyId => _config.OpacityHotkey,
+            GlassHotkeyId => _config.GlassHotkey,
+            GlassAllHotkeyId => _config.GlassAllHotkey,
             _ => _config.PriorityHotkey,
         };
         string text = HotkeyText(raw);
@@ -476,6 +492,11 @@ public partial class DockWindow : Window
     /// </summary>
     private void OnForegroundChanged(IntPtr hwnd)
     {
+        IntPtr root = Native.GetAncestor(hwnd, Native.GA_ROOT);
+        if (_groups != null && root != IntPtr.Zero && AppOfWindow(_groups, root) >= 0)
+        {
+            _lastManaged = root;
+        }
         if (!_enabled || _fullscreenPause || _foregroundRefreshQueued)
         {
             return;
@@ -590,6 +611,202 @@ public partial class DockWindow : Window
 
         _config.Pins = entries;
         SaveConfig(out _);
+    }
+
+    /// <summary>Durchsichtigkeit aller Fenster der Apps, für die ein Wert gesetzt ist (nach jedem Abgleich, billig dank Merkliste).</summary>
+    private void ApplyWindowOpacity(List<WindowInfo>[] groups)
+    {
+        if (!_enabled || _fullscreenPause)
+        {
+            return;
+        }
+
+        for (int i = 0; i < groups.Length && i < _config.Apps.Count; i++)
+        {
+            int percent = _config.Apps[i].Opacity;
+            if (percent < 10 || percent >= 100)
+            {
+                continue;
+            }
+            foreach (WindowInfo w in groups[i])
+            {
+                WindowAlpha.Apply(w.Hwnd, percent);
+            }
+        }
+    }
+
+    /// <summary>Fenster, auf das sich Glas- und Durchsichtigkeitsbefehle beziehen: das vordere, sonst das zuletzt benutzte einer verwalteten App.</summary>
+    private IntPtr TargetWindow()
+    {
+        IntPtr hwnd = Native.GetAncestor(Native.GetForegroundWindow(), Native.GA_ROOT);
+        if (_groups != null && AppOfWindow(_groups, hwnd) >= 0)
+        {
+            return hwnd;
+        }
+        return _lastManaged != IntPtr.Zero && Native.IsWindow(_lastManaged) ? _lastManaged : hwnd;
+    }
+
+    /// <summary>Glas-Werte vom Launcher setzen (blur = Radius, window = Deckkraft in Prozent, tint = Tönung) und alle Hilfsfenster damit neu aufbauen.</summary>
+    private void SetGlassValue(string name, int value)
+    {
+        switch (name)
+        {
+            case "blur":
+                _config.GlassBlurRadius = Math.Clamp(value, 0, 40);
+                WindowGlass.BlurRadius = _config.GlassBlurRadius;
+                break;
+            case "window":
+                _config.GlassWindowPercent = Math.Clamp(value, 40, 100);
+                WindowGlass.WindowPercent = _config.GlassWindowPercent;
+                break;
+            case "tint":
+                _config.GlassTint = Math.Clamp(value, 0, 255);
+                WindowGlass.BackdropTint = (byte)_config.GlassTint;
+                break;
+            case "wallpaper":
+                _config.GlassWallpaper = value != 0;
+                WindowGlass.UseWallpaper = _config.GlassWallpaper;
+                break;
+            default:
+                return;
+        }
+        WindowGlass.RestoreAll();   // der nächste Abgleich baut alle Hilfsfenster mit den neuen Werten wieder auf
+        SaveConfig(out _);
+        Refresh();
+    }
+
+    /// <summary>Wirksamer Glas-Modus einer App: ihr eigener Wert, sonst die allgemeine Einstellung (Glas für alle).</summary>
+    private int EffectiveGlass(int app)
+    {
+        int own = _config.Apps[app].Glass;
+        if (own < 0)
+        {
+            return 0;
+        }
+        if (own > 0)
+        {
+            return own;
+        }
+        return _config.GlassAll && !_config.Apps[app].Ignored ? 3 : 0;
+    }
+
+    /// <summary>Glas für alle Fenster der Apps, bei denen es wirksam ist (nach jedem Abgleich, billig dank Merkliste).</summary>
+    private void ApplyWindowGlass(List<WindowInfo>[] groups)
+    {
+        if (!_enabled || _fullscreenPause)
+        {
+            return;
+        }
+
+        for (int i = 0; i < groups.Length && i < _config.Apps.Count; i++)
+        {
+            int mode = EffectiveGlass(i);
+            foreach (WindowInfo w in groups[i])
+            {
+                WindowGlass.Apply(w.Hwnd, mode);   // Modus 0 stellt ein früher angefasstes Fenster wieder her
+            }
+        }
+
+        // "Glas für alle": auch Fenster von Programmen, die keinen Eintrag in der App-Liste haben
+        if (_config.GlassAll)
+        {
+            var now = new HashSet<IntPtr>(WindowFinder.FindUnmatchedWindows(_config.Apps));
+            foreach (IntPtr h in _extraGlass.Where(h => !now.Contains(h)).ToList())
+            {
+                WindowGlass.Apply(h, 0);
+                _extraGlass.Remove(h);
+            }
+            foreach (IntPtr h in now)
+            {
+                WindowGlass.Apply(h, 3);
+                _extraGlass.Add(h);
+            }
+        }
+        else if (_extraGlass.Count > 0)
+        {
+            foreach (IntPtr h in _extraGlass)
+            {
+                WindowGlass.Apply(h, 0);
+            }
+            _extraGlass.Clear();
+        }
+    }
+
+    private readonly HashSet<IntPtr> _extraGlass = new();
+
+    /// <summary>Kürzel: Glas für alle Fenster verwalteter Apps ein- oder ausschalten.</summary>
+    private void ToggleGlassAll()
+    {
+        _config.GlassAll = !_config.GlassAll;
+        if (_groups != null)
+        {
+            ApplyWindowGlass(_groups);
+        }
+        SaveConfig(out bool notified);
+        if (!notified)
+        {
+            Toast.Show($"Glas für alle Fenster: {(_config.GlassAll ? "an" : "aus")}");
+        }
+    }
+
+    /// <summary>Kürzel: Glas für die App des Fensters im Vordergrund umschalten: aus, Acrylic, Mica, wieder aus.</summary>
+    private void CycleWindowGlass()
+    {
+        IntPtr hwnd = TargetWindow();
+        int app = AppOfWindow(_groups, hwnd);
+        if (app < 0)
+        {
+            Toast.Show("Dieses Fenster gehört zu keiner verwalteten App.");
+            return;
+        }
+
+        // Wirksamer Zustand umschalten; bei "Glas für alle" bedeutet "aus" eine Ausnahme (-1), sonst den Standardwert (0)
+        bool on = EffectiveGlass(app) > 0;
+        _config.Apps[app].Glass = on ? (_config.GlassAll ? -1 : 0) : 3;
+        int next = EffectiveGlass(app);
+        foreach (WindowInfo w in _groups[app])
+        {
+            WindowGlass.Apply(w.Hwnd, next);
+        }
+        SaveConfig(out bool notified);
+        if (!notified)
+        {
+            Toast.Show($"{AppName(app)}: Glas {(next == 0 ? (_config.GlassAll ? "aus (Ausnahme)" : "aus") : "mit Unschärfe")}");
+        }
+    }
+
+    /// <summary>
+    /// Kürzel: die App des Fensters im Vordergrund stufenweise durchsichtiger machen (100, 85, 70, 55, 40 %, dann wieder 100).
+    /// Der Wert gilt für alle Fenster der App und wird in der Konfiguration gemerkt.
+    /// </summary>
+    private void CycleWindowOpacity()
+    {
+        IntPtr hwnd = TargetWindow();
+        int app = AppOfWindow(_groups, hwnd);
+        if (app < 0)
+        {
+            Toast.Show("Dieses Fenster gehört zu keiner verwalteten App.");
+            return;
+        }
+
+        int[] steps = { 100, 85, 70, 55, 40 };
+        int current = _config.Apps[app].Opacity is >= 10 and < 100 ? _config.Apps[app].Opacity : 100;
+        int next = steps.FirstOrDefault(s => s < current);
+        if (next == 0)
+        {
+            next = 100;
+        }
+
+        _config.Apps[app].Opacity = next >= 100 ? 0 : next;
+        foreach (WindowInfo w in _groups[app])
+        {
+            WindowAlpha.Apply(w.Hwnd, next);
+        }
+        SaveConfig(out bool notified);
+        if (!notified)
+        {
+            Toast.Show($"{AppName(app)}: {(next >= 100 ? "deckend" : next + " % sichtbar")}");
+        }
     }
 
     /// <summary>Kürzel: das Fenster im Vordergrund in die Mitte holen, wenn es in einem Platz liegt (wie die Zurück-Taste).</summary>
@@ -838,6 +1055,21 @@ public partial class DockWindow : Window
                 {
                     CycleCenterSplit();
                 }
+                else if (p[1] == "glass")
+                {
+                    CycleWindowGlass();
+                }
+                else if (p[1] == "glassall")
+                {
+                    ToggleGlassAll();
+                }
+                else if (p[1] == "opacity")
+                {
+                    CycleWindowOpacity();
+                }
+                return "ok";
+            case "glassset" when p.Length >= 3 && int.TryParse(p[2], out int glassValue):
+                SetGlassValue(p[1], glassValue);
                 return "ok";
             case "overlay" when p.Length >= 2:
                 _overlayHidden = p[1] == "off";
@@ -957,6 +1189,8 @@ public partial class DockWindow : Window
             _mouse.Dispose();
             _drag.Dispose();
             _foreground.Dispose();
+            WindowAlpha.RestoreAll();   // alle durchsichtig gemachten Fenster wieder deckend
+            WindowGlass.RestoreAll();
             _bridge?.Dispose();
             _dragTimer.Stop();
             _highlight?.Close();
@@ -1013,6 +1247,21 @@ public partial class DockWindow : Window
             else if (id == SplitHotkeyId)
             {
                 CycleCenterSplit();
+                handled = true;
+            }
+            else if (id == OpacityHotkeyId)
+            {
+                CycleWindowOpacity();
+                handled = true;
+            }
+            else if (id == GlassHotkeyId)
+            {
+                CycleWindowGlass();
+                handled = true;
+            }
+            else if (id == GlassAllHotkeyId)
+            {
+                ToggleGlassAll();
                 handled = true;
             }
             else if (id == ListEscHotkeyId)
@@ -1297,6 +1546,8 @@ public partial class DockWindow : Window
         }
 
         PlaceLateStartApp(groups);
+        ApplyWindowOpacity(groups);
+        ApplyWindowGlass(groups);
 
         if (_centerHwnd != IntPtr.Zero)
         {
@@ -1326,6 +1577,8 @@ public partial class DockWindow : Window
                 MoveCenterWindows();
             }
         }
+
+        AutoCenter(groups);
 
         if (_enabled && !_fullscreenPause)
         {
@@ -1913,6 +2166,62 @@ public partial class DockWindow : Window
         if (_center2Hwnd != IntPtr.Zero && Native.IsWindow(_center2Hwnd) && !WindowFinder.IsFullscreen(_center2Hwnd))
         {
             WindowPlacer.Move(_center2Hwnd, DockLayout.CenterPart(_config, 1));
+        }
+    }
+
+    private readonly HashSet<IntPtr> _autoCentered = new();
+
+    /// <summary>
+    /// Fenster der Apps aus AutoCenterApps in die Mitte setzen, wenn dort eine Hälfte frei ist (jedes Fenster nur einmal).
+    /// Die erste App bevorzugt die erste Hälfte, die zweite die zweite; ist ihre Hälfte belegt, nimmt sie die andere freie.
+    /// </summary>
+    private void AutoCenter(List<WindowInfo>[] groups)
+    {
+        if (!_enabled || _fullscreenPause || _config.AutoCenterApps == null || _config.AutoCenterApps.Count == 0)
+        {
+            return;
+        }
+
+        _autoCentered.RemoveWhere(h => !Native.IsWindow(h));
+        for (int i = 0; i < _config.AutoCenterApps.Count; i++)
+        {
+            int app = _config.Apps.FindIndex(a => a.Name.Equals(_config.AutoCenterApps[i], StringComparison.OrdinalIgnoreCase));
+            if (app < 0 || app >= groups.Length || IsIgnored(app))
+            {
+                continue;
+            }
+
+            WindowInfo w = groups[app].FirstOrDefault(x => !x.Fullscreen && !IsCenterWindow(x.Hwnd) && !_blocked.Contains(x.Hwnd) && !_autoCentered.Contains(x.Hwnd));
+            if (w == null)
+            {
+                continue;
+            }
+
+            // Zwei Apps wollen sich die Mitte teilen: ungeteilt gibt es nur eine Hälfte
+            if (_config.CenterSplit == 0 && _config.AutoCenterApps.Count > 1)
+            {
+                _config.CenterSplit = 1;
+            }
+            bool[] free = { _centerHwnd == IntPtr.Zero, _config.CenterSplit != 0 && _center2Hwnd == IntPtr.Zero };
+            int part = i < 2 && free[i] ? i : free[0] ? 0 : free[1] ? 1 : -1;
+            if (part < 0 || !WindowPlacer.Place(w.Hwnd, DockLayout.CenterPart(_config, part)))
+            {
+                continue;
+            }
+
+            if (part == 1)
+            {
+                _center2Hwnd = w.Hwnd;
+                _center2App = app;
+            }
+            else
+            {
+                _centerHwnd = w.Hwnd;
+                _centerApp = app;
+            }
+            _autoCentered.Add(w.Hwnd);
+            Unpin(w.Hwnd);
+            Array.Fill(_slotSignature, null);
         }
     }
 

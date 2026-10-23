@@ -41,6 +41,9 @@ Es läuft nur eine Instanz. Fokus-Dock hat kein Hauptfenster, sondern ein Symbol
 | `Strg+Alt+A` | Übersicht aller Fenster als Liste mit Vorschauen, nach Priorität der Apps geordnet. Klick holt das Fenster in seinen Platz nach vorn (minimierte werden wiederhergestellt), die Zurück-Taste in die Mitte, Esc schließt. |
 | `Strg+Alt+L` | Zum nächsten gespeicherten Layout wechseln. |
 | `Strg+Alt+H` | Mitte teilen, reihum: ein Fenster, zwei nebeneinander, zwei übereinander (auch im Menü des Symbols). Ein Fenster, das in die Mitte kommt, nimmt die erste Hälfte; das bisherige rückt in die freie zweite. Auf eine Hälfte gezogen, landet das Fenster genau dort. In `config.json`: `centerSplit` (0/1/2) und `splitHotkey`. |
+| `Strg+Alt+T` | Das Fenster im Vordergrund stufenweise durchsichtiger machen (100, 85, 70, 55, 40 %, dann wieder deckend). Der Wert gilt für alle Fenster der App und wird in `config.json` gemerkt (`opacity` bei der App). Der Hintergrund scheint durch, wird aber nicht unscharf; Store-Apps reagieren meist nicht darauf. |
+| `Strg+Alt+J` | Glas für die App des Fensters im Vordergrund ein- oder ausschalten: ein Hilfsfenster sitzt hinter dem Fenster und folgt ihm; es zeigt weichgezeichnet, was dahinter liegt (die Fenster dahinter, aufgenommen im Hintergrund; mit `glassWallpaper` auf `true` auch das Hintergrundbild), das Fenster selbst wird leicht durchsichtig (`glassWindowPercent`, Standard 88). Wirkt bei jedem Programm, auch bei Browsern. Die Unschärfe ist ein Filter mit frei wählbarem Radius (`glassBlurRadius` in Pixeln, Standard 10; 0 = scharf), die Tönung stellt `glassTint` ein. Die Aufnahme hat `glassCaptureScale` Prozent der Auflösung (Standard 40) und wird alle `glassCaptureIntervalMs` Millisekunden erneuert (Standard 700); bei Fenstern, die sich nicht aufnehmen lassen, bleibt es dunkel. Gemerkt in `config.json` (`glass` bei der App). Die Windows-Materialien Acrylic und Mica (`glass` 1 und 2) färben nur die Titelleiste und sind nicht mehr im Kürzel. |
+| `Strg+Alt+K` | Glas für alle Fenster verwalteter Apps ein- oder ausschalten (`glassAll` in `config.json`). Einzelne Apps lassen sich mit `Strg+Alt+J` ausnehmen (`glass` -1) oder wieder aufnehmen. |
 | `Strg+Alt+P` | Prioritätsliste: alle bekannten Apps, vorne = wichtiger. Jede Zeile zeigt Rang, ob die App läuft, und ihren Platz. Unter der Liste stehen „Platz garantiert“, „Nicht verwalten“ und „Entfernen“ für die gewählte App. ▲/▼ (auch Alt+↑/↓) und diese Einstellungen werden sofort in `config.json` gespeichert. „Plätze neu verteilen“ belegt die Plätze nach der Reihenfolge neu. |
 | `Strg+Alt+Q` | Beendet Fokus-Dock. |
 | **Shift** beim Loslassen eines gezogenen Fensters | Das Fenster wird frei abgelegt: kein Einrasten, nichts wird gespeichert. Beim Ziehen zeigt eine Vorschau, wohin das Fenster einrasten würde. |
@@ -178,3 +181,7 @@ dotnet publish -c Release -r win-x64 --self-contained false -o publish
 ## Lizenz
 
 Apache License 2.0, siehe [LICENSE](LICENSE).
+
+## Claude und Hermes automatisch in die Mitte
+
+Mit `autoCenterApps` in der Konfiguration (zum Beispiel `[\"Claude\", \"Hermes Web\"]`) kommen die Fenster dieser Apps beim Auftauchen in die Mitte, solange dort eine Hälfte frei ist: die erste App in die erste Hälfte (links oder oben), die zweite in die zweite. Jedes Fenster wird nur einmal so gesetzt, danach darf es woanders liegen. Leer lassen schaltet es aus.

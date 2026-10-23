@@ -144,6 +144,23 @@ internal static class WindowFinder
         return result;
     }
 
+    /// <summary>Alle Fenster ohne Config-Eintrag (nicht im Vollbild), jedes einzeln: für Glas bei "alle Fenster".</summary>
+    public static List<IntPtr> FindUnmatchedWindows(IReadOnlyList<AppEntry> apps)
+    {
+        var result = new List<IntPtr>();
+        uint self = (uint)Environment.ProcessId;
+        Native.EnumWindows((hwnd, _) =>
+        {
+            WindowInfo info = Describe(hwnd, self);
+            if (info != null && !info.Fullscreen && !apps.Any(app => Matches(app, info)))
+            {
+                result.Add(hwnd);
+            }
+            return true;
+        }, IntPtr.Zero);
+        return result;
+    }
+
     /// <summary>
     /// Name einer Web-App aus dem Fenstertitel: der erste Abschnitt vor " - " oder " — ", ohne Zähler wie "(2) ".
     /// Null, wenn das Fenster keiner Web-App eines strengen Browsers (Vivaldi) gehört.

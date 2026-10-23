@@ -51,6 +51,42 @@ public sealed class AppConfig
     /// <summary>Mitte teilen: reihum aus, nebeneinander, übereinander.</summary>
     public string SplitHotkey { get; set; } = "Ctrl+Alt+H";
 
+    /// <summary>Das Fenster im Vordergrund stufenweise durchsichtiger machen (100, 85, 70, 55, 40 %), pro App gemerkt.</summary>
+    public string OpacityHotkey { get; set; } = "Ctrl+Alt+T";
+
+    /// <summary>Glas für die App des Fensters im Vordergrund umschalten (aus, Acrylic, Mica), pro App gemerkt.</summary>
+    public string GlassHotkey { get; set; } = "Ctrl+Alt+J";
+
+    /// <summary>Glas für alle Fenster verwalteter Apps ein- oder ausschalten (Einzelne Apps lassen sich mit dem Glas-Kürzel ausnehmen).</summary>
+    public string GlassAllHotkey { get; set; } = "Ctrl+Alt+K";
+
+    /// <summary>Glas „mit Unschärfe“ für alle Fenster verwalteter Apps. Apps mit Glas = -1 sind ausgenommen.</summary>
+    public bool GlassAll { get; set; }
+
+    /// <summary>Glas „mit Unschärfe“: wie deckend das Fenster bleibt (Prozent, 40–100). Weniger = der Hintergrund scheint stärker durch.</summary>
+    public int GlassWindowPercent { get; set; } = 88;
+
+    /// <summary>Glas „mit Unschärfe“: Stärke der dunklen Tönung des Hilfsfensters hinter dem Fenster (0–255). Weniger = klarer, mehr = ruhiger.</summary>
+    public int GlassTint { get; set; } = 60;
+
+    /// <summary>
+    /// Apps, deren Fenster beim Auftauchen in die Mitte kommen, solange dort eine Hälfte frei ist: die erste links bzw. oben, die zweite
+    /// rechts bzw. unten. Jedes Fenster wird nur einmal so gesetzt, danach darf es woanders liegen. Leer = aus.
+    /// </summary>
+    public List<string> AutoCenterApps { get; set; } = new();
+
+    /// <summary>Glas „mit Unschärfe“: Radius der Unschärfe in Pixeln (0 = scharf, 30 = sehr weich). Weniger = Bild dahinter besser erkennbar.</summary>
+    public int GlassBlurRadius { get; set; } = 10;
+
+    /// <summary>Glas „mit Unschärfe“: das Desktop-Hintergrundbild im Glas zeigen. Aus (Standard): nur die Fenster dahinter, sonst dunkel.</summary>
+    public bool GlassWallpaper { get; set; }
+
+    /// <summary>Glas „mit Unschärfe“: Auflösung der Aufnahme hinter dem Fenster in Prozent (20–100). Weniger = schneller und weicher.</summary>
+    public int GlassCaptureScale { get; set; } = 40;
+
+    /// <summary>Glas „mit Unschärfe“: Abstand der Aufnahmen in Millisekunden (200–5000). Kleiner = aktueller, aber mehr CPU.</summary>
+    public int GlassCaptureIntervalMs { get; set; } = 700;
+
     /// <summary>Teilung der Mitte: 0 = ein Fenster, 1 = zwei nebeneinander, 2 = zwei übereinander.</summary>
     public int CenterSplit { get; set; }
 
@@ -422,4 +458,15 @@ public sealed class AppEntry
     /// </summary>
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool Ignored { get; set; }
+
+    /// <summary>
+    /// Durchsichtigkeit der Fenster dieser App in Prozent (10–99). 0 = aus, die Fenster sind ganz deckend. Das Kürzel
+    /// (OpacityHotkey) stellt sie stufenweise um; wird nur gespeichert, wenn gesetzt.
+    /// </summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int Opacity { get; set; }
+
+    /// <summary>Glas für die Fenster dieser App: 0 = wie die allgemeine Einstellung (GlassAll), 3 = an (Hilfsfenster mit Unschärfe), -1 = aus, auch bei GlassAll. 1 und 2 sind die alten Titelleisten-Materialien.</summary>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
+    public int Glass { get; set; }
 }
